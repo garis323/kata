@@ -84,6 +84,46 @@ Render a report:
 uv run python -m promptforge report --run <run-id>
 ```
 
+## Real Agent Commands
+
+PromptForge evals are designed to call a real agent command. This repo now includes two adapter
+scripts:
+
+- `scripts/run_codex_eval.sh`
+- `scripts/run_claude_eval.sh`
+
+Example with Codex:
+
+```bash
+uv run python -m promptforge eval \
+  --repo https://github.com/e35ventura/taopedia-articles.git \
+  --eval-pack evals/e35ventura__taopedia-articles \
+  --mode contributor \
+  --agent-command "$PWD/scripts/run_codex_eval.sh"
+```
+
+Example with Claude:
+
+```bash
+uv run python -m promptforge eval \
+  --repo https://github.com/e35ventura/taopedia-articles.git \
+  --eval-pack evals/e35ventura__taopedia-articles \
+  --mode contributor \
+  --agent-command "$PWD/scripts/run_claude_eval.sh"
+```
+
+Optional model overrides:
+
+```bash
+PROMPTFORGE_CODEX_MODEL=o3 \
+uv run python -m promptforge eval ... --agent-command "$PWD/scripts/run_codex_eval.sh"
+
+PROMPTFORGE_CLAUDE_MODEL=sonnet \
+uv run python -m promptforge eval ... --agent-command "$PWD/scripts/run_claude_eval.sh"
+```
+
+These adapters assume the corresponding CLI is already authenticated and available on `PATH`.
+
 ## Current Status
 
 The core CLI path is working:
