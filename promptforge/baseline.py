@@ -1,26 +1,30 @@
 from __future__ import annotations
 
-from promptforge.repository import resolve_repository
+from promptforge.repository import RepositoryContext, resolve_repository
 
 
 def generate_baseline_prompt(repo_ref: str, mode: str) -> str:
     with resolve_repository(repo_ref) as repo:
-        title = f"{mode.capitalize()} Baseline Prompt: {repo.display_name}"
-        lines: list[str] = []
-        lines.append(f"# {title}")
-        lines.append("")
-        lines.append(f"Repo: `{repo.display_name}`")
-        if repo.full_name:
-            lines.append(f"GitHub: `{repo.full_name}`")
-        lines.append("")
-        lines.append("This is the generic baseline prompt used for PromptForge comparison.")
-        lines.append("It is intentionally not repo-specialized.")
-        lines.append("")
-        if mode == "reviewer":
-            lines.extend(render_reviewer_baseline())
-        else:
-            lines.extend(render_contributor_baseline())
-        return "\n".join(lines)
+        return generate_baseline_prompt_from_repository(repo, mode)
+
+
+def generate_baseline_prompt_from_repository(repo: RepositoryContext, mode: str) -> str:
+    title = f"{mode.capitalize()} Baseline Prompt: {repo.display_name}"
+    lines: list[str] = []
+    lines.append(f"# {title}")
+    lines.append("")
+    lines.append(f"Repo: `{repo.display_name}`")
+    if repo.full_name:
+        lines.append(f"GitHub: `{repo.full_name}`")
+    lines.append("")
+    lines.append("This is the generic baseline prompt used for PromptForge comparison.")
+    lines.append("It is intentionally not repo-specialized.")
+    lines.append("")
+    if mode == "reviewer":
+        lines.extend(render_reviewer_baseline())
+    else:
+        lines.extend(render_contributor_baseline())
+    return "\n".join(lines)
 
 
 def render_contributor_baseline() -> list[str]:

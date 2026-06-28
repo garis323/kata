@@ -21,11 +21,19 @@ from promptforge.repository import RepositoryContext, resolve_repository
 
 
 def generate_prompt(repo_ref: str, mode: str, registry_url: str | None = None) -> str:
-    resolved_registry_url = resolve_registry_url(registry_url)
     with resolve_repository(repo_ref) as repo:
-        registry = load_registry(resolved_registry_url)
-        prompt_data = analyze_repository(repo, registry, resolved_registry_url, mode)
-        return render_prompt(prompt_data, mode)
+        return generate_prompt_from_repository(repo, mode, registry_url)
+
+
+def generate_prompt_from_repository(
+    repo: RepositoryContext,
+    mode: str,
+    registry_url: str | None = None,
+) -> str:
+    resolved_registry_url = resolve_registry_url(registry_url)
+    registry = load_registry(resolved_registry_url)
+    prompt_data = analyze_repository(repo, registry, resolved_registry_url, mode)
+    return render_prompt(prompt_data, mode)
 
 
 def analyze_repository(
