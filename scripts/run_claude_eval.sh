@@ -25,6 +25,9 @@ Rules:
 - Follow the eval task exactly.
 - Keep the diff minimal and task-scoped.
 - Do not edit files outside the task scope unless the task explicitly requires it.
+- The PromptForge runner will execute the task's own checks after you stop.
+- Do not spend time running repo validation commands unless the needed dependencies are already available.
+- If a repo validation command is unavailable, skip it and finish the task-scoped edit.
 - Do not print a long explanation. Apply the changes directly in the workspace.
 - Stop once the workspace contains your final solution.
 

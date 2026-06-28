@@ -65,6 +65,8 @@ def run_eval(
     agent_command: str,
     registry_url: str | None = None,
     output_root: str | None = None,
+    agent_timeout_seconds: int | None = None,
+    checks_timeout_seconds: int | None = None,
 ) -> EvalRunSummary:
     validations = discover_eval_pack_tasks(eval_pack_path)
     invalid = [result for result in validations if not result.is_valid]
@@ -105,6 +107,8 @@ def run_eval(
                     repo_ref=task_repo_ref,
                     mode=mode,
                     agent_command=agent_command,
+                    agent_timeout_seconds=agent_timeout_seconds,
+                    checks_timeout_seconds=checks_timeout_seconds,
                 ),
                 run_variant(
                     variant_name="generated",
@@ -119,6 +123,8 @@ def run_eval(
                     repo_ref=task_repo_ref,
                     mode=mode,
                     agent_command=agent_command,
+                    agent_timeout_seconds=agent_timeout_seconds,
+                    checks_timeout_seconds=checks_timeout_seconds,
                 ),
             ]
 
@@ -155,6 +161,8 @@ def run_variant(
     repo_ref: str,
     mode: str,
     agent_command: str,
+    agent_timeout_seconds: int | None,
+    checks_timeout_seconds: int | None,
 ) -> VariantResult:
     workspace = variant_root / "workspace"
     shutil.copytree(repo_snapshot, workspace)
@@ -178,6 +186,7 @@ def run_variant(
         repo_ref=repo_ref,
         stdout_path=agent_stdout,
         stderr_path=agent_stderr,
+        timeout_seconds=agent_timeout_seconds,
     )
     checks_exit_code = run_checks(
         checks_path=eval_pack_root / "checks.sh",
@@ -189,6 +198,7 @@ def run_variant(
         repo_ref=repo_ref,
         stdout_path=checks_stdout,
         stderr_path=checks_stderr,
+        timeout_seconds=checks_timeout_seconds,
     )
     return VariantResult(
         name=variant_name,
@@ -215,6 +225,7 @@ def run_agent_command(
     repo_ref: str,
     stdout_path: Path,
     stderr_path: Path,
+    timeout_seconds: int | None,
 ) -> int:
     env = build_env(
         workspace=workspace,
@@ -224,7 +235,14 @@ def run_agent_command(
         mode=mode,
         repo_ref=repo_ref,
     )
-    return run_shell_command(command, workspace, env, stdout_path, stderr_path)
+    return run_shell_command(
+        command,
+        workspace,
+        env,
+        stdout_path,
+        stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def run_checks(
@@ -238,6 +256,7 @@ def run_checks(
     repo_ref: str,
     stdout_path: Path,
     stderr_path: Path,
+    timeout_seconds: int | None,
 ) -> int:
     env = build_env(
         workspace=workspace,
@@ -253,6 +272,7 @@ def run_checks(
         env,
         stdout_path,
         stderr_path,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -262,8 +282,16 @@ def run_shell_command(
     env: dict[str, str],
     stdout_path: Path,
     stderr_path: Path,
+    timeout_seconds: int | None,
 ) -> int:
-    return run_process(["bash", "-lc", command], cwd, env, stdout_path, stderr_path)
+    return run_process(
+        ["bash", "-lc", command],
+        cwd,
+        env,
+        stdout_path,
+        stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def run_process(
@@ -272,19 +300,28 @@ def run_process(
     env: dict[str, str],
     stdout_path: Path,
     stderr_path: Path,
+    timeout_seconds: int | None,
 ) -> int:
     with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
         "w", encoding="utf-8"
     ) as stderr_file:
-        completed = subprocess.run(
-            command,
-            cwd=str(cwd),
-            env=env,
-            stdout=stdout_file,
-            stderr=stderr_file,
-            text=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(cwd),
+                env=env,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            stderr_file.write(
+                f"PromptForge timeout after {timeout_seconds} seconds for command: "
+                f"{' '.join(command)}\n"
+            )
+            return 124
     return completed.returncode
 
 

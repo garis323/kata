@@ -76,6 +76,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional base directory for eval run artifacts. Defaults to ./runs.",
     )
+    eval_cmd.add_argument(
+        "--agent-timeout-seconds",
+        type=int,
+        default=None,
+        help="Optional timeout for each agent-command run.",
+    )
+    eval_cmd.add_argument(
+        "--checks-timeout-seconds",
+        type=int,
+        default=None,
+        help="Optional timeout for each checks.sh run.",
+    )
     eval_cmd.set_defaults(handler=handle_eval)
 
     eval_pack = subparsers.add_parser("eval-pack", help="Scaffold or validate repo eval packs.")
@@ -122,6 +134,8 @@ def handle_eval(args: argparse.Namespace) -> int:
         agent_command=args.agent_command,
         registry_url=args.registry_url,
         output_root=args.output_root,
+        agent_timeout_seconds=args.agent_timeout_seconds,
+        checks_timeout_seconds=args.checks_timeout_seconds,
     )
     print(
         f"Created eval run: {summary.run_id}\n"
