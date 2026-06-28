@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
+from promptforge.baseline import generate_baseline_prompt
 from promptforge.generator import generate_prompt
 
 
@@ -32,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     baseline = subparsers.add_parser("baseline", help="Create or print a baseline prompt.")
     baseline.add_argument("--repo", required=True, help="Path or URL of the target repo.")
+    baseline.add_argument(
+        "--mode",
+        choices=["contributor", "reviewer"],
+        default="contributor",
+        help="Baseline prompt mode to generate.",
+    )
     baseline.set_defaults(handler=handle_baseline)
 
     eval_cmd = subparsers.add_parser("eval", help="Run baseline vs generated prompt evals.")
@@ -52,11 +59,8 @@ def handle_generate(args: argparse.Namespace) -> int:
 
 
 def handle_baseline(args: argparse.Namespace) -> int:
-    print(
-        "Baseline prompt support is not implemented yet.\n"
-        f"repo={args.repo}"
-    )
-    return 2
+    print(generate_baseline_prompt(args.repo, args.mode))
+    return 0
 
 
 def handle_eval(args: argparse.Namespace) -> int:
