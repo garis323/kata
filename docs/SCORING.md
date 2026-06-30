@@ -378,7 +378,7 @@ Helpful secondary metrics:
 
 - total cost
 - average cost per task
-- prompt hashes
+- artifact hashes
 - task-pool fingerprints
 
 ---

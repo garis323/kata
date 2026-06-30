@@ -35,9 +35,9 @@ This is the workflow in order.
    That pack contains pinned tasks and checks.
 
 3. Kata initializes the lane for that repo and mode.
-   Today this still seeds baseline/frontier lane artifacts from the old prompt
-   bootstrap path, but challenger submissions already use the `agent.py`
-   contract.
+   Today this seeds the first baseline/frontier lane artifacts from
+   initialization prompts, but challenger submissions already use the
+   `agent.py` contract.
 
 4. A miner opens a PR to `Kata` with one challenger agent submission.
 
@@ -98,5 +98,4 @@ Current boundary:
 
 Next step:
 
-- add validator-owned model/runtime policy and stricter anti-cheat validation
-  on top of the current agent-bundle lane contract
+- keep hardening anti-cheat rules and finish the GitHub bot automation layer

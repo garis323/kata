@@ -9,7 +9,8 @@ produced it.
 Every meaningful eval or challenge run should record:
 
 - evaluator version
-- prompt hashes
+- validator model
+- artifact hashes
 - task-pool fingerprint
 - benchmark task ids
 - challenge or eval run id

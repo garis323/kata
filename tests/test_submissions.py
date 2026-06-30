@@ -108,16 +108,18 @@ def challenge_summary_payload(
     submission_root: Path,
     frontier_artifact_hash: str,
     candidate_artifact_hash: str,
+    validator_model: str = "Qwen3-32B",
 ) -> dict[str, object]:
     baseline_artifact = pack_root / "agents" / "contributor" / "baseline"
     frontier_artifact = pack_root / "agents" / "contributor" / "frontier"
     candidate_artifact = submission_root
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "run_id": "challenge-1",
         "manifest_path": str((pack_root / "frontier.json").resolve()),
         "mode": "contributor",
         "evaluator_version": "2026-06-29.v1",
+        "validator_model": validator_model,
         "baseline_artifact": str(baseline_artifact.resolve()),
         "frontier_artifact": str(frontier_artifact.resolve()),
         "candidate_artifact": str(candidate_artifact.resolve()),
@@ -540,6 +542,52 @@ def test_verify_submission_result_detects_stale_frontier(
     assert not result.frontier_is_current
     assert not result.auto_merge_ready
     assert "Challenge result is stale because the frontier artifact has changed." in result.reasons
+
+
+def test_verify_submission_result_detects_validator_model_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    monkeypatch.setenv("KATA_VALIDATOR_MODEL", "Qwen3-32B")
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-model",
+        output_root=str(repo_root / "submissions"),
+    )
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": True, \"diff\": \"winner\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
+    summary_path = tmp_path / "challenge_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            challenge_summary_payload(
+                pack_root=pack_root,
+                submission_root=submission_root,
+                frontier_artifact_hash=sha256_directory(
+                    pack_root / "agents" / "contributor" / "frontier",
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
+                candidate_artifact_hash=hash_submission_bundle(submission_root),
+                validator_model="OldModel-32B",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = verify_submission_result(str(submission_root), str(summary_path))
+
+    assert not result.benchmark_is_current
+    assert not result.auto_merge_ready
+    assert "Challenge result is stale because the validator model has changed." in result.reasons
 
 
 def test_decide_submission_action_returns_merge_for_verified_winner(

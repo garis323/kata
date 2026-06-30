@@ -70,6 +70,12 @@ A challenger only improves if it performs better on controlled repo tasks:
 Agent quality is measured by task success, path-policy compliance, and any
 other behavior encoded directly in the benchmark checks.
 
+Current validator runtime policy:
+
+- validator-owned base model: `Qwen3-32B`
+- validator-owned API base and API key
+- validator-owned timeouts and benchmark tasks
+
 ## Competition Model
 
 Kata uses three competition roles for each repo and mode:
@@ -115,8 +121,9 @@ Kata currently has two separate jobs:
 2. `evaluate challengers`
    Compare baseline, frontier, and challenger artifacts on the same benchmark.
 
-That is why the repo has both prompt-creation commands and competition
-commands.
+That is why the repo has both initialization helpers and competition commands.
+Today, initialization still uses source-grounded prompt generation to seed the
+first baseline/frontier agents, but the competition itself is agent-vs-agent.
 
 The simplest mental model is:
 
@@ -256,8 +263,7 @@ At minimum, that means:
 
 ## Quickstart
 
-Generate a repo-specific prompt for initialization or as a challenger starting
-point:
+Generate a repo-specific initialization prompt used to seed a starting agent:
 
 ```bash
 uv run kata generate \
@@ -265,7 +271,7 @@ uv run kata generate \
   --mode contributor
 ```
 
-Generate the fixed baseline prompt:
+Generate the fixed baseline initialization prompt:
 
 ```bash
 uv run kata baseline \
@@ -425,7 +431,8 @@ What is already solid:
 - stricter report and path-policy handling
 - frontier challenge workflow
 - evaluator-version and benchmark-provenance recording
-- prompt initialization for seeding a frontier
+- validator-owned `Qwen3-32B` runtime policy
+- initialization prompt bootstrapping for seeded agents
 - regression tests for evaluator behavior
 
 What is still planned:
@@ -435,7 +442,7 @@ What is still planned:
 - automated promotion policy
 - larger benchmark coverage
 - stronger reviewer-mode examples
-- prompt-search automation beyond manual challenger prompts
+- stronger anti-cheat and bundle-policy validation
 - stronger maintainer-owned evaluator protection
 
 ## Development

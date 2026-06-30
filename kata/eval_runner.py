@@ -10,7 +10,12 @@ from pathlib import Path
 
 from kata.baseline import generate_baseline_prompt_from_repository
 from kata.benchmarks import resolve_eval_pack_path
-from kata.config import resolve_registry_url
+from kata.config import (
+    resolve_registry_url,
+    resolve_validator_api_base,
+    resolve_validator_api_key,
+    resolve_validator_model,
+)
 from kata.eval_pack import EvalPackValidationResult, discover_eval_pack_tasks
 from kata.generator import generate_prompt_from_repository
 from kata.provenance import EVALUATOR_VERSION, pool_fingerprint
@@ -445,6 +450,7 @@ def build_run_metadata(
 ) -> dict[str, str]:
     metadata = {
         "evaluator_version": EVALUATOR_VERSION,
+        "validator_model": resolve_validator_model(),
         "task_count": str(len(task_ids)),
         "task_ids": ",".join(task_ids),
         "task_pool_fingerprint": pool_fingerprint(task_roots),
@@ -466,6 +472,9 @@ def build_env(
 ) -> dict[str, str]:
     env = dict(os.environ)
     env["KATA_WORKSPACE"] = str(workspace.resolve())
+    env["KATA_VALIDATOR_MODEL"] = resolve_validator_model()
+    env["KATA_VALIDATOR_API_BASE"] = resolve_validator_api_base()
+    env["KATA_VALIDATOR_API_KEY"] = resolve_validator_api_key()
     resolved_artifact = str(artifact_path.resolve())
     env["KATA_ARTIFACT_FILE"] = resolved_artifact
     env["KATA_ARTIFACT_DIR"] = str(artifact_path.parent.resolve())

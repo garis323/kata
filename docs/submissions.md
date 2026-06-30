@@ -47,6 +47,10 @@ The validator owns:
 - timeouts
 - benchmark tasks
 
+Current default validator model:
+
+- `Qwen3-32B`
+
 So miners compete on agent behavior, not on model routing or secret management.
 
 ### `agent_manifest.json`
@@ -155,6 +159,7 @@ The verification currently checks:
 - challenger artifact hash still matches the submission
 - frontier hash is still current
 - evaluator version is still current
+- validator model is still current
 - primary and holdout pool fingerprints are still current
 - the challenge itself was promotion-ready
 

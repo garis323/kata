@@ -4,9 +4,9 @@ set -euo pipefail
 workspace=${KATA_WORKSPACE:-}
 agent_file=${KATA_AGENT_FILE:-}
 task_file=${KATA_TASK_FILE:-}
-model=${KATA_SOLVER_MODEL:-${KATA_LLM_MODEL:-}}
-api_base=${KATA_SOLVER_API_BASE:-${KATA_LLM_API_BASE:-}}
-api_key=${KATA_SOLVER_API_KEY:-${KATA_LLM_API_KEY:-}}
+model=${KATA_VALIDATOR_MODEL:-Qwen3-32B}
+api_base=${KATA_VALIDATOR_API_BASE:-}
+api_key=${KATA_VALIDATOR_API_KEY:-}
 
 : "${workspace:?KATA_WORKSPACE is required}"
 : "${agent_file:?KATA_AGENT_FILE is required}"
@@ -63,19 +63,16 @@ agent_path = Path(os.environ["KATA_AGENT_FILE"]).resolve()
 task_path = Path(os.environ["KATA_TASK_FILE"]).resolve()
 issue = task_path.read_text(encoding="utf-8")
 model = (
-    os.environ.get("KATA_SOLVER_MODEL")
-    or os.environ.get("KATA_LLM_MODEL")
-    or os.environ.get("KATA_LLM_MODEL", "")
+    os.environ.get("KATA_VALIDATOR_MODEL")
+    or "Qwen3-32B"
 )
 api_base = (
-    os.environ.get("KATA_SOLVER_API_BASE")
-    or os.environ.get("KATA_LLM_API_BASE")
-    or os.environ.get("KATA_LLM_API_BASE", "")
+    os.environ.get("KATA_VALIDATOR_API_BASE")
+    or ""
 )
 api_key = (
-    os.environ.get("KATA_SOLVER_API_KEY")
-    or os.environ.get("KATA_LLM_API_KEY")
-    or os.environ.get("KATA_LLM_API_KEY", "")
+    os.environ.get("KATA_VALIDATOR_API_KEY")
+    or ""
 )
 
 module = load_agent_module(agent_path)

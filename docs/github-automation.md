@@ -60,9 +60,13 @@ The bot runner should already have:
 If using the challenger-agent path, the runner also needs validator-owned LLM
 settings available through env vars such as:
 
-- `KATA_LLM_MODEL`
-- `KATA_LLM_API_BASE`
-- `KATA_LLM_API_KEY`
+- `KATA_VALIDATOR_MODEL`
+- `KATA_VALIDATOR_API_BASE`
+- `KATA_VALIDATOR_API_KEY`
+
+Current default validator model:
+
+- `Qwen3-32B`
 
 ## Safety Notes
 

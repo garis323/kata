@@ -34,6 +34,8 @@ def render_report(run_ref: str) -> str:
     metadata = summary.get("metadata") or {}
     if metadata.get("evaluator_version"):
         lines.append(f"- Evaluator version: `{metadata['evaluator_version']}`")
+    if metadata.get("validator_model"):
+        lines.append(f"- Validator model: `{metadata['validator_model']}`")
     if metadata.get("task_pool_fingerprint"):
         lines.append(f"- Task pool fingerprint: `{metadata['task_pool_fingerprint']}`")
     lines.append("")

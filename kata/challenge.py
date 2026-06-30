@@ -7,6 +7,7 @@ from pathlib import Path
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files
 from kata.benchmarks import resolve_eval_pack_path
+from kata.config import resolve_validator_model
 from kata.eval_runner import ArtifactVariant, EvalRunSummary, run_artifact_variants
 from kata.frontier import (
     DEFAULT_PROMOTION_MARGIN_POINTS,
@@ -38,6 +39,7 @@ class ChallengeSummary:
     manifest_path: str
     mode: str
     evaluator_version: str
+    validator_model: str
     baseline_artifact: str
     frontier_artifact: str
     candidate_artifact: str
@@ -77,6 +79,7 @@ def run_frontier_challenge(
     frontier_files = load_bundle_files(Path(mode_config.frontier_artifact).expanduser().resolve())
     candidate_files = load_bundle_files(candidate_path)
     evaluator_version = mode_config.evaluator_version or EVALUATOR_VERSION
+    validator_model = resolve_validator_model()
     baseline_hash = resolve_baseline_artifact_hash(mode_config)
     frontier_hash = resolve_frontier_artifact_hash(mode_config)
     candidate_hash = sha256_bundle_dict(candidate_files)
@@ -112,6 +115,7 @@ def run_frontier_challenge(
             "evaluator_version": evaluator_version,
             "pool_name": "primary",
             "pool_fingerprint": mode_config.primary_pool_fingerprint or "",
+            "validator_model": validator_model,
             "baseline_artifact_hash": baseline_hash,
             "frontier_artifact_hash": frontier_hash,
             "candidate_artifact_hash": candidate_hash,
@@ -154,6 +158,7 @@ def run_frontier_challenge(
                 "evaluator_version": evaluator_version,
                 "pool_name": "holdout",
                 "pool_fingerprint": mode_config.holdout_pool_fingerprint or "",
+                "validator_model": validator_model,
                 "baseline_artifact_hash": baseline_hash,
                 "frontier_artifact_hash": frontier_hash,
                 "candidate_artifact_hash": candidate_hash,
@@ -168,11 +173,12 @@ def run_frontier_challenge(
         promotion_margin_points=promotion_margin_points,
     )
     summary = ChallengeSummary(
-        schema_version=3,
+        schema_version=4,
         run_id=challenge_run_id,
         manifest_path=str(eval_pack_root / "frontier.json"),
         mode=mode,
         evaluator_version=evaluator_version,
+        validator_model=validator_model,
         baseline_artifact=str(Path(mode_config.baseline_artifact).resolve()),
         frontier_artifact=str(Path(mode_config.frontier_artifact).resolve()),
         candidate_artifact=str(candidate_path),
@@ -199,6 +205,7 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
     lines.append(f"Manifest: `{summary.manifest_path}`")
     lines.append(f"Candidate artifact: `{summary.candidate_artifact}`")
     lines.append(f"Evaluator version: {summary.evaluator_version}")
+    lines.append(f"Validator model: {summary.validator_model}")
     lines.append(f"Baseline artifact hash: {short_hash(summary.baseline_artifact_hash)}")
     lines.append(f"Frontier artifact hash: {short_hash(summary.frontier_artifact_hash)}")
     lines.append(f"Candidate artifact hash: {short_hash(summary.candidate_artifact_hash)}")
@@ -242,6 +249,7 @@ def load_challenge_summary(path: str) -> ChallengeSummary:
         manifest_path=payload["manifest_path"],
         mode=payload["mode"],
         evaluator_version=payload.get("evaluator_version", EVALUATOR_VERSION),
+        validator_model=payload.get("validator_model", resolve_validator_model()),
         baseline_artifact=baseline_artifact,
         frontier_artifact=frontier_artifact,
         candidate_artifact=candidate_artifact,

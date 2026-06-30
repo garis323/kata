@@ -15,6 +15,7 @@ from kata.agent_bundle import (
 )
 from kata.benchmarks import ensure_active_repo_pack, resolve_eval_pack_path
 from kata.challenge import ChallengeSummary, load_challenge_summary, run_frontier_challenge
+from kata.config import resolve_validator_model
 from kata.frontier import load_frontier_manifest, resolve_frontier_artifact_hash
 from kata.provenance import sha256_directory
 
@@ -92,6 +93,8 @@ class SubmissionVerificationResult:
     recorded_candidate_artifact_hash: str
     current_frontier_artifact_hash: str
     recorded_frontier_artifact_hash: str
+    current_validator_model: str
+    recorded_validator_model: str
     submission_matches_challenge: bool
     frontier_is_current: bool
     benchmark_is_current: bool
@@ -403,6 +406,7 @@ def verify_submission_result(
 
     candidate_hash = hash_submission_bundle(Path(validation.submission_path))
     current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
+    current_validator_model = resolve_validator_model()
 
     expected_manifest_path = (
         resolve_eval_pack_path(validation.metadata.repo_pack) / "frontier.json"
@@ -415,6 +419,7 @@ def verify_submission_result(
     frontier_is_current = summary.frontier_artifact_hash == current_frontier_hash
     benchmark_is_current = (
         summary.evaluator_version == (mode_config.evaluator_version or summary.evaluator_version)
+        and summary.validator_model == current_validator_model
         and summary.primary_pool_fingerprint == mode_config.primary_pool_fingerprint
         and summary.holdout_pool_fingerprint == mode_config.holdout_pool_fingerprint
     )
@@ -424,7 +429,9 @@ def verify_submission_result(
         reasons.append("Challenge result does not match the current submission payload.")
     if not frontier_is_current:
         reasons.append("Challenge result is stale because the frontier artifact has changed.")
-    if not benchmark_is_current:
+    if summary.validator_model != current_validator_model:
+        reasons.append("Challenge result is stale because the validator model has changed.")
+    elif not benchmark_is_current:
         reasons.append("Challenge result is stale because the benchmark lane has changed.")
     if not summary.promotion_ready:
         reasons.append(f"Challenge is not promotion-ready: {summary.promotion_reason}")
@@ -439,6 +446,8 @@ def verify_submission_result(
         recorded_candidate_artifact_hash=summary.candidate_artifact_hash,
         current_frontier_artifact_hash=current_frontier_hash,
         recorded_frontier_artifact_hash=summary.frontier_artifact_hash,
+        current_validator_model=current_validator_model,
+        recorded_validator_model=summary.validator_model,
         submission_matches_challenge=submission_matches,
         frontier_is_current=frontier_is_current,
         benchmark_is_current=benchmark_is_current,
