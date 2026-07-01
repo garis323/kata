@@ -219,6 +219,24 @@ See `docs/submissions.md` for the detailed submission contract and stale-result
 verification flow. See `docs/github-automation.md` for the intended bot
 integration contract.
 
+## GitTensor Reward Adapter
+
+Kata should be registered in GitTensor as a trusted-label repository, not as a
+raw PR-size scoring target.
+
+The intended adapter is:
+
+- invalid, losing, and stale candidate PRs are closed
+- only confirmed promotion winners are merged
+- `kata-bot` applies `kata:winner:<repo-pack>` and `kata:mode:<mode>` labels
+  before merging a winner
+- GitTensor is configured with `fixed_base_score`, `default_label_multiplier:
+  0.0`, and winner-label multipliers
+
+So GitTensor rewards objective Kata promotion events. Its time decay then makes
+newer king promotions score higher than older promotions. See
+`docs/gittensor-integration.md` for the registry entry and operational rules.
+
 ## Benchmark Registry
 
 Kata expects benchmark packs to live in a dedicated benchmark registry

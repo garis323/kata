@@ -87,7 +87,16 @@ the hidden side.
     If the king or pool state changed during the run, the result is stale and
     must be rerun.
 
-11. If the result is still fresh and merge-safe, the bot merges the PR.
+11. If the result is still fresh and merge-safe, the bot applies GitTensor
+    reward labels and merges the PR.
+
+    Winning PR labels:
+    - `kata:winner:<repo-pack>`
+    - `kata:mode:<mode>`
+
+    Invalid, losing, stale, and held PRs receive non-reward status labels
+    instead. This lets GitTensor use trusted-label scoring and ignore raw PR
+    size.
 
 12. After merge, the bot promotes the winning submission into
     `kata/kings/<repo-pack>/<mode>/`, updates the frontier manifests, and then
@@ -96,6 +105,9 @@ the hidden side.
 
 That last step is important: `submissions/` is a temporary intake area, not the
 long-term home of the king.
+
+See `docs/gittensor-integration.md` for the matching GitTensor
+`master_repositories.json` entry.
 
 ## Task Pool Rotation
 
