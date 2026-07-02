@@ -36,6 +36,7 @@ from kata.oracle import main as oracle_main
 from kata.reporting import render_report
 from kata.submissions import (
     SUPPORTED_SUBMISSION_MODES,
+    LanePromotionResult,
     decide_submission_action,
     evaluate_submission,
     init_submission,
@@ -573,15 +574,32 @@ def handle_frontier_promote(args: argparse.Namespace) -> int:
         if args.public_root
         else Path.cwd().resolve()
     )
-    manifest = promote_submission_result(
+    result = promote_submission_result(
         args.submission_path or summary.candidate_artifact,
         args.challenge_run,
         public_root=str(public_root),
     )
+    if isinstance(result, LanePromotionResult):
+        if args.json:
+            print_json(
+                {
+                    "lane_id": result.lane_id,
+                    "king_root": result.king_root,
+                    "current_king_submission_id": result.king.current_king_submission_id,
+                    "current_king_artifact_hash": result.king.current_king_artifact_hash,
+                    "promotion_timestamp": result.king.promotion_timestamp,
+                }
+            )
+        else:
+            print(
+                f"Promoted `{result.king.current_king_submission_id}` "
+                f"as king of lane `{result.lane_id}`."
+            )
+        return 0
     print(
-        render_frontier_json(manifest)
+        render_frontier_json(result)
         if args.json
-        else render_frontier_manifest(manifest, summary.mode)
+        else render_frontier_manifest(result, summary.mode)
     )
     return 0
 

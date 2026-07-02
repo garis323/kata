@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from kata.agent_bundle import (
     AGENT_MANIFEST_FILENAME,
     write_agent_manifest,
 )
-from kata.challenge import current_primary_pool_fingerprint
+from kata.challenge import current_primary_pool_fingerprint, run_sn60_challenge
 from kata.frontier import (
     FRONTIER_SCHEMA_VERSION,
     PRIMARY_SELECTION_RANDOM_LIVE,
@@ -23,6 +24,11 @@ from kata.lane_state import (
     LANE_METADATA_SCHEMA_VERSION,
     EvaluatorLaneMetadata,
     LaneKingState,
+    load_benchmark_snapshot,
+    load_challenge_state,
+    load_lane_king_state,
+    write_benchmark_snapshot,
+    write_challenge_state,
     write_lane_king_state,
     write_lane_metadata,
 )
@@ -1874,3 +1880,138 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
     assert summary is sentinel
     assert calls["lane_id"] == "sn99__custom"
     assert calls["frontier_artifact_path"] == str(king_root.resolve())
+
+
+def run_registry_lane_sn60_duel(tmp_path: Path, monkeypatch):
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+    monkeypatch.delenv("KATA_BENCHMARKS_ROOT", raising=False)
+    king_root = seed_lane_king(public_root, "sn60__bitsec")
+
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = sandbox_root / "validator" / "curated-highs-only-2025-08-08.json"
+    benchmark_path.parent.mkdir(parents=True)
+    benchmark_path.write_text(
+        json.dumps([{"project_id": "project-alpha", "vulnerabilities": []}]) + "\n",
+        encoding="utf-8",
+    )
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-10",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(VALID_MINER_AGENT, encoding="utf-8")
+
+    def execute(context):
+        return {"success": True, "report": {"vulnerabilities": []}}
+
+    def evaluate(context, report_payload):
+        rate = 1.0 if context.variant_name == "candidate" else 0.0
+        return {
+            "status": "success",
+            "result": {
+                "detection_rate": rate,
+                "true_positives": int(rate * 2),
+                "total_expected": 2,
+                "total_found": 1,
+                "result": "PASS" if rate == 1.0 else "FAIL",
+            },
+        }
+
+    summary = run_sn60_challenge(
+        frontier_artifact_path=str(king_root),
+        candidate_artifact_path=str(submission_root),
+        project_keys=["project-alpha"],
+        candidate_submission_id="alice-20260702-10",
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=2,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-a",
+        public_root=str(public_root),
+        screening_hook=lambda ctx: {"success": True, "report": {"vulnerabilities": []}},
+        execution_hook=execute,
+        evaluation_hook=evaluate,
+    )
+    summary_path = Path(summary.manifest_path).with_name("challenge_summary.json")
+    return public_root, submission_root, summary, summary_path
+
+
+def test_verify_and_promote_sn60_registry_lane_end_to_end(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root, submission_root, summary, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+
+    verification = verify_submission_result(str(submission_root), str(summary_path))
+    assert verification.submission_matches_challenge
+    assert verification.frontier_is_current
+    assert verification.benchmark_is_current
+    assert verification.promotion_ready
+    assert verification.auto_merge_ready
+
+    result = promote_submission_result(
+        str(submission_root),
+        str(summary_path),
+        public_root=str(public_root),
+    )
+    assert result.lane_id == "sn60__bitsec"
+    king_state = load_lane_king_state("sn60__bitsec", public_root=str(public_root))
+    assert king_state.current_king_submission_id == "alice-20260702-10"
+    assert king_state.current_king_artifact_hash == summary.candidate_artifact_hash
+    promoted_agent = public_root / "kings" / "sn60__bitsec" / "miner" / "agent.py"
+    assert promoted_agent.read_text(encoding="utf-8").strip() == VALID_MINER_AGENT.strip()
+
+    # After promotion the candidate IS the king, so re-verifying the same
+    # submission must fail validation as a copy of the current lane king.
+    with pytest.raises(ValueError, match="exact copy of the current lane king"):
+        verify_submission_result(str(submission_root), str(summary_path))
+
+
+def test_verify_sn60_registry_lane_detects_stale_benchmark_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root, submission_root, summary, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+
+    snapshot = load_benchmark_snapshot("sn60__bitsec", public_root=str(public_root))
+    write_benchmark_snapshot(
+        "sn60__bitsec",
+        replace(snapshot, sandbox_commit_hash="commit-b"),
+        public_root=str(public_root),
+    )
+
+    verification = verify_submission_result(str(submission_root), str(summary_path))
+    assert verification.submission_matches_challenge
+    assert verification.frontier_is_current
+    assert not verification.benchmark_is_current
+    assert not verification.auto_merge_ready
+    assert any("SN60 benchmark lane has changed" in reason for reason in verification.reasons)
+
+
+def test_verify_sn60_registry_lane_detects_superseded_challenge_fingerprint(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root, submission_root, summary, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+
+    state = load_challenge_state("sn60__bitsec", public_root=str(public_root))
+    write_challenge_state(
+        "sn60__bitsec",
+        replace(state, freshness_fingerprint="0" * 64),
+        public_root=str(public_root),
+    )
+
+    verification = verify_submission_result(str(submission_root), str(summary_path))
+    assert not verification.benchmark_is_current
+    assert not verification.auto_merge_ready

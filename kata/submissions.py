@@ -43,15 +43,23 @@ from kata.frontier import (
     resolve_frontier_artifact_hash,
 )
 from kata.lane_state import (
+    KING_STATE_SCHEMA_VERSION,
+    LaneKingState,
     PackRegistryEntry,
+    benchmark_snapshot_path,
+    challenge_state_path,
     lane_king_state_path,
+    load_benchmark_snapshot,
+    load_challenge_state,
     load_lane_king_state,
     load_pack_registry,
+    write_lane_king_state,
 )
-from kata.provenance import sha256_directory
+from kata.provenance import sha256_directory, short_hash
 from kata.public_artifacts import (
     publish_public_king,
     resolve_artifact_path,
+    resolve_kata_root,
     resolve_public_king_root,
 )
 from kata.screening import validate_sn60_static_screening
@@ -425,6 +433,38 @@ def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
     return metadata.repo_pack == SN60_MINER_LANE_ID and metadata.mode == SN60_MINER_MODE
 
 
+def resolve_sn60_lane_king_hash(
+    lane_id: str,
+    *,
+    repo_pack: str,
+    mode: str,
+) -> str | None:
+    """Resolve the current king artifact hash for a registry-backed SN60 lane."""
+    if lane_king_state_path(lane_id).exists():
+        king = load_lane_king_state(lane_id)
+        if king.current_king_artifact_hash:
+            return king.current_king_artifact_hash
+    king_root = resolve_public_king_root(public_root=None, repo_pack=repo_pack, mode=mode)
+    if (king_root / SUBMISSION_AGENT_FILENAME).exists():
+        return hash_submission_bundle(king_root)
+    return None
+
+
+def sn60_lane_benchmark_is_current(lane_id: str, summary: ChallengeSummary) -> bool:
+    """Freshness check against the lane's recorded benchmark snapshot and fingerprint."""
+    if not benchmark_snapshot_path(lane_id).exists():
+        return False
+    snapshot = load_benchmark_snapshot(lane_id)
+    expected_version = f"{snapshot.scorer_version}@{short_hash(snapshot.sandbox_commit_hash)}"
+    if summary.evaluator_version != expected_version:
+        return False
+    if challenge_state_path(lane_id).exists():
+        challenge_state = load_challenge_state(lane_id)
+        if challenge_state.freshness_fingerprint != summary.primary_pool_fingerprint:
+            return False
+    return True
+
+
 def resolve_sn60_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
     """Resolve (lane_id, king_artifact_path) for an SN60 duel.
 
@@ -560,22 +600,41 @@ def verify_submission_result(
         )
 
     summary = load_challenge_summary(challenge_summary_path)
-    manifest = load_frontier_manifest(validation.metadata.repo_pack)
-    mode_config = manifest.modes.get(validation.metadata.mode)
-    if mode_config is None:
-        raise ValueError(
-            f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
-        )
-
     candidate_hash = hash_submission_bundle(Path(validation.submission_path))
-    current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
+
     if is_sn60_miner_metadata(validation.metadata):
+        evaluator_entry = find_evaluator_pack_entry(
+            validation.metadata.repo_pack, validation.metadata.mode
+        )
+        if evaluator_entry is not None:
+            current_frontier_hash = (
+                resolve_sn60_lane_king_hash(
+                    evaluator_entry.lane_id,
+                    repo_pack=validation.metadata.repo_pack,
+                    mode=validation.metadata.mode,
+                )
+                or ""
+            )
+            lane_benchmark_is_current = sn60_lane_benchmark_is_current(
+                evaluator_entry.lane_id, summary
+            )
+        else:
+            manifest = load_frontier_manifest(validation.metadata.repo_pack)
+            mode_config = manifest.modes.get(validation.metadata.mode)
+            if mode_config is None:
+                raise ValueError(
+                    f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
+                )
+            current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
+            lane_benchmark_is_current = True
         submission_matches = (
             summary.mode == validation.metadata.mode
             and summary.candidate_artifact_hash == candidate_hash
         )
         frontier_is_current = summary.frontier_artifact_hash == current_frontier_hash
-        benchmark_is_current = summary.validator_model == SN60_VALIDATOR_MODEL
+        benchmark_is_current = (
+            summary.validator_model == SN60_VALIDATOR_MODEL and lane_benchmark_is_current
+        )
         current_promotion_ready = summary.promotion_ready
 
         reasons: list[str] = []
@@ -611,6 +670,13 @@ def verify_submission_result(
             reasons=reasons,
         )
 
+    manifest = load_frontier_manifest(validation.metadata.repo_pack)
+    mode_config = manifest.modes.get(validation.metadata.mode)
+    if mode_config is None:
+        raise ValueError(
+            f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
+        )
+    current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
     current_validator_model = resolve_validator_model()
     current_primary_fingerprint = current_primary_pool_fingerprint(
         validation.metadata.repo_pack,
@@ -768,6 +834,15 @@ def promote_submission_result(
         )
 
     summary = load_challenge_summary(challenge_summary_path)
+    evaluator_entry = find_evaluator_pack_entry(verification.repo_pack, verification.mode)
+    if evaluator_entry is not None:
+        return promote_lane_king(
+            entry=evaluator_entry,
+            verification=verification,
+            summary=summary,
+            public_root=public_root,
+        )
+
     eval_pack_path = (
         verification.repo_pack
         if verification.repo_pack == SN60_MINER_LANE_ID
@@ -793,6 +868,47 @@ def promote_submission_result(
             candidate_artifact_hash=summary.candidate_artifact_hash,
         )
     return manifest
+
+
+@dataclass(frozen=True)
+class LanePromotionResult:
+    lane_id: str
+    king_root: str
+    king: LaneKingState
+
+
+def promote_lane_king(
+    *,
+    entry: PackRegistryEntry,
+    verification: SubmissionVerificationResult,
+    summary: ChallengeSummary,
+    public_root: str | None = None,
+):
+    king_root = publish_public_king(
+        public_root=str(resolve_kata_root(public_root)),
+        repo_pack=verification.repo_pack,
+        mode=verification.mode,
+        submission_id=verification.submission_id,
+        challenge_run_id=summary.run_id,
+        candidate_artifact_path=verification.submission_path,
+        frontier_artifact_hash=verification.candidate_artifact_hash,
+        candidate_artifact_hash=verification.candidate_artifact_hash,
+    )
+    now = datetime.now(UTC).isoformat()
+    king = LaneKingState(
+        schema_version=KING_STATE_SCHEMA_VERSION,
+        current_king_submission_id=verification.submission_id,
+        current_king_artifact_hash=verification.candidate_artifact_hash,
+        promotion_source_pr=None,
+        promotion_timestamp=now,
+        updated_at=now,
+    )
+    write_lane_king_state(entry.lane_id, king, public_root=public_root)
+    return LanePromotionResult(
+        lane_id=entry.lane_id,
+        king_root=str(king_root),
+        king=king,
+    )
 
 
 def render_submission_validation(result: SubmissionValidationResult) -> str:
