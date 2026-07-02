@@ -35,6 +35,7 @@ from kata.frontier import (
 )
 from kata.provenance import sha256_directory
 from kata.public_artifacts import publish_public_king, resolve_artifact_path
+from kata.screening import validate_sn60_static_screening
 
 SUBMISSIONS_DIRNAME = "submissions"
 SUBMISSION_SCHEMA_VERSION = 2
@@ -878,16 +879,7 @@ def validate_submission_candidate(
 
     bundle_files = load_bundle_files(submission_root)
     if metadata.mode == "miner":
-        helper_paths = [
-            relative_path
-            for relative_path in bundle_paths
-            if Path(relative_path).parts[0] == "helpers"
-        ]
-        if helper_paths:
-            reasons.append(
-                "SN60 miner submissions do not support helper files in V1: "
-                + ", ".join(helper_paths)
-            )
+        reasons.extend(validate_sn60_static_screening(submission_root))
 
     reasons.extend(validate_bundle_python_sources(bundle_files, mode=metadata.mode))
     reasons.extend(validate_bundle_static_policy(bundle_files, mode=metadata.mode))

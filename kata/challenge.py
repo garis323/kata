@@ -18,6 +18,8 @@ from kata.evaluators.sn60_bitsec import (
     Sn60EvaluationHook,
     Sn60ExecutionHook,
     Sn60VariantSummary,
+    hash_bundle_root,
+    resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
 )
 from kata.frontier import (
@@ -39,6 +41,14 @@ from kata.lane_state import (
 from kata.live_progress import update_live_status
 from kata.provenance import EVALUATOR_VERSION, pool_fingerprint, short_hash
 from kata.public_artifacts import resolve_artifact_path
+from kata.screening import (
+    Sn60ScreeningHook,
+    Sn60ScreeningResult,
+    run_sn60_screening,
+    screening_result_payload,
+    sn60_screening_freshness_fingerprint,
+    write_screening_result,
+)
 
 SUBMISSION_METADATA_FILENAME = "submission.json"
 SN60_MINER_LANE_ID = "sn60__bitsec"
@@ -293,25 +303,71 @@ def run_sn60_challenge(
     sandbox_commit: str | None = None,
     screening_result: dict[str, object] | None = None,
     public_root: str | None = None,
+    screening_hook: Sn60ScreeningHook | None = None,
     execution_hook: Sn60ExecutionHook | None = None,
     evaluation_hook: Sn60EvaluationHook | None = None,
 ) -> ChallengeSummary:
+    if not project_keys:
+        raise ValueError("SN60 challenge requires at least one screening project key.")
+    sandbox_source = resolve_sn60_sandbox_source(
+        sandbox_root=sandbox_root,
+        benchmark_file=benchmark_file,
+        sandbox_commit=sandbox_commit,
+        scorer_version="ScaBenchScorerV2",
+    )
+    screening = run_sn60_screening(
+        candidate_artifact_path=candidate_artifact_path,
+        project_key=project_keys[0],
+        output_root=output_root or "runs",
+        sandbox_source=sandbox_source,
+        execution_hook=screening_hook,
+    )
+    effective_screening_result = screening_result_payload(screening)
+    if screening_result:
+        effective_screening_result["details"] = {
+            **dict(effective_screening_result.get("details") or {}),
+            "caller_context": screening_result,
+        }
+    if not screening.passed:
+        summary = build_sn60_screening_failure_summary(
+            frontier_artifact_path=frontier_artifact_path,
+            candidate_artifact_path=candidate_artifact_path,
+            project_keys=project_keys,
+            lane_id=lane_id,
+            screening=screening,
+        )
+        write_challenge_summary(
+            Path(screening.result_path).with_name("challenge_summary.json"),
+            summary,
+        )
+        record_sn60_screening_failure_provenance(
+            lane_id=lane_id,
+            candidate_submission_id=candidate_submission_id,
+            frontier_artifact_path=frontier_artifact_path,
+            project_keys=project_keys,
+            replicas_per_project=replicas_per_project,
+            screening=screening,
+            public_root=public_root,
+        )
+        return summary
+
     duel_summary = run_sn60_bitsec_duel(
         frontier_artifact_path=frontier_artifact_path,
         candidate_artifact_path=candidate_artifact_path,
         project_keys=project_keys,
         output_root=output_root,
         replicas_per_project=replicas_per_project,
-        sandbox_root=sandbox_root,
-        benchmark_file=benchmark_file,
-        sandbox_commit=sandbox_commit,
+        sandbox_root=sandbox_source.sandbox_root,
+        benchmark_file=sandbox_source.benchmark_file,
+        sandbox_commit=sandbox_source.sandbox_commit,
         execution_hook=execution_hook,
         evaluation_hook=evaluation_hook,
     )
+    write_screening_result(Path(duel_summary.output_root) / "screening_result.json", screening)
     summary = sn60_duel_to_challenge_summary(
         duel_summary,
         lane_id=lane_id,
-        screening_result=screening_result or {"status": "passed"},
+        screening_result=effective_screening_result,
     )
     challenge_summary_path = Path(duel_summary.output_root) / "challenge_summary.json"
     write_challenge_summary(challenge_summary_path, summary)
@@ -319,7 +375,7 @@ def run_sn60_challenge(
         lane_id=lane_id,
         candidate_submission_id=candidate_submission_id,
         duel_summary=duel_summary,
-        screening_result=screening_result or {"status": "passed"},
+        screening_result=effective_screening_result,
         public_root=public_root,
     )
     return summary
@@ -354,7 +410,11 @@ def sn60_duel_to_challenge_summary(
         promotion_margin_points=0.0,
         holdout_promotion_margin_points=0.0,
         created_at=duel_summary.created_at,
-        primary=sn60_duel_to_pool_summary(duel_summary, eval_run_summary=duel_summary_path),
+        primary=sn60_duel_to_pool_summary(
+            duel_summary,
+            eval_run_summary=duel_summary_path,
+            screening_result=screening_result,
+        ),
         holdout=None,
         promotion_ready=decision.promotion_ready,
         promotion_reason=f"{lane_id}: {decision.reason}",
@@ -365,12 +425,14 @@ def sn60_duel_to_pool_summary(
     duel_summary: Sn60DuelSummary,
     *,
     eval_run_summary: Path,
+    screening_result: dict[str, object] | None = None,
 ) -> ChallengePoolSummary:
     frontier_score = round(duel_summary.frontier.average_score * 100, 2)
     candidate_score = round(duel_summary.candidate.average_score * 100, 2)
     decision = evaluate_sn60_promotion(
         frontier=duel_summary.frontier,
         candidate=duel_summary.candidate,
+        screening_result=screening_result,
     )
     return ChallengePoolSummary(
         task_ids=list(duel_summary.project_keys),
@@ -390,6 +452,57 @@ def sn60_duel_to_pool_summary(
         },
         candidate_beats_frontier=decision.final_winner == "candidate",
         candidate_score_delta=round(candidate_score - frontier_score, 2),
+    )
+
+
+def build_sn60_screening_failure_summary(
+    *,
+    frontier_artifact_path: str,
+    candidate_artifact_path: str,
+    project_keys: list[str],
+    lane_id: str,
+    screening: Sn60ScreeningResult,
+) -> ChallengeSummary:
+    frontier_root = Path(frontier_artifact_path).expanduser().resolve()
+    candidate_root = Path(candidate_artifact_path).expanduser().resolve()
+    frontier_hash = hash_bundle_root(frontier_root)
+    freshness_fingerprint = sn60_screening_freshness_fingerprint(
+        frontier_artifact_hash=frontier_hash,
+        screening_result=screening,
+    )
+    reason = "; ".join(screening.reasons) if screening.reasons else "unknown screening failure"
+    return ChallengeSummary(
+        schema_version=4,
+        run_id=screening.run_id,
+        manifest_path=screening.result_path,
+        mode=SN60_MINER_MODE,
+        evaluator_version=(
+            f"{screening.sandbox_source.scorer_version}"
+            f"@{short_hash(screening.sandbox_source.sandbox_commit)}"
+        ),
+        validator_model=SN60_VALIDATOR_MODEL,
+        frontier_artifact=str(frontier_root),
+        candidate_artifact=str(candidate_root),
+        frontier_artifact_hash=frontier_hash,
+        candidate_artifact_hash=screening.artifact_hash,
+        primary_pool_fingerprint=freshness_fingerprint,
+        holdout_pool_fingerprint=None,
+        promotion_margin_points=0.0,
+        holdout_promotion_margin_points=0.0,
+        created_at=screening.created_at,
+        primary=ChallengePoolSummary(
+            task_ids=list(project_keys),
+            eval_run_summary=screening.result_path,
+            total_task_weight=1.0,
+            variant_successes={"frontier": 0, "candidate": 0},
+            variant_invalid_tasks={"frontier": 0, "candidate": 1},
+            variant_scores={"frontier": 0.0, "candidate": 0.0},
+            candidate_beats_frontier=False,
+            candidate_score_delta=0.0,
+        ),
+        holdout=None,
+        promotion_ready=False,
+        promotion_reason=f"{lane_id}: candidate failed SN60 screening: {reason}",
     )
 
 
@@ -488,6 +601,66 @@ def record_sn60_lane_provenance(
             },
             final_winner=decision.final_winner,
             reward_label_applied=reward_label_applied,
+            recorded_at=datetime.now(UTC).isoformat(),
+        ),
+        public_root=public_root,
+    )
+    return challenge_path, promotion_path
+
+
+def record_sn60_screening_failure_provenance(
+    *,
+    lane_id: str,
+    candidate_submission_id: str,
+    frontier_artifact_path: str,
+    project_keys: list[str],
+    replicas_per_project: int,
+    screening: Sn60ScreeningResult,
+    public_root: str | None = None,
+) -> tuple[Path, Path]:
+    frontier_hash = hash_bundle_root(Path(frontier_artifact_path).expanduser().resolve())
+    freshness_fingerprint = sn60_screening_freshness_fingerprint(
+        frontier_artifact_hash=frontier_hash,
+        screening_result=screening,
+    )
+    screening_payload = screening_result_payload(screening)
+    reason = "; ".join(screening.reasons) if screening.reasons else "unknown screening failure"
+    challenge_path = write_challenge_state(
+        lane_id,
+        ChallengeState(
+            schema_version=CHALLENGE_STATE_SCHEMA_VERSION,
+            candidate_submission_id=candidate_submission_id,
+            candidate_artifact_hash=screening.artifact_hash,
+            king_artifact_hash=frontier_hash,
+            screening_result=screening_payload,
+            selected_project_keys=list(project_keys),
+            validator_replica_count=replicas_per_project,
+            run_ids=[screening.run_id],
+            freshness_fingerprint=freshness_fingerprint,
+            updated_at=datetime.now(UTC).isoformat(),
+        ),
+        public_root=public_root,
+    )
+    promotion_path = write_promotion_record(
+        lane_id,
+        PromotionRecord(
+            schema_version=PROMOTION_RECORD_SCHEMA_VERSION,
+            final_metrics={
+                "run_id": screening.run_id,
+                "promotion_ready": False,
+                "promotion_reason": f"candidate failed SN60 screening: {reason}",
+                "screening_status": screening.status,
+                "screening_stage": screening.stage,
+                "sandbox_commit": screening.sandbox_source.sandbox_commit,
+                "benchmark_sha256": screening.sandbox_source.benchmark_sha256,
+                "scorer_version": screening.sandbox_source.scorer_version,
+            },
+            local_replica_scores={"frontier": [], "candidate": []},
+            pass_counts={"frontier": 0, "candidate": 0},
+            true_positives={"frontier": 0, "candidate": 0},
+            invalid_runs={"frontier": 0, "candidate": 1},
+            final_winner="frontier",
+            reward_label_applied=None,
             recorded_at=datetime.now(UTC).isoformat(),
         ),
         public_root=public_root,

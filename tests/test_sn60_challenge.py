@@ -87,6 +87,9 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
             },
         }
 
+    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
+        return {"success": True, "report": {"vulnerabilities": []}}
+
     summary = run_sn60_challenge(
         frontier_artifact_path=str(frontier_root),
         candidate_artifact_path=str(candidate_root),
@@ -98,6 +101,7 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
         benchmark_file=str(benchmark_path),
         sandbox_commit="sandbox-commit-1",
         public_root=str(tmp_path / "public"),
+        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -128,6 +132,9 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
     assert promotion_record.final_winner == "candidate"
     assert promotion_record.final_metrics["promotion_ready"] is True
     assert promotion_record.local_replica_scores["candidate"] == [1.0, 1.0]
+    assert (
+        Path(summary.manifest_path).with_name("screening_result.json")
+    ).exists()
 
 
 def test_evaluate_sn60_promotion_rejects_invalid_candidate() -> None:
@@ -193,6 +200,9 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
             },
         }
 
+    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
+        return {"success": True, "report": {"vulnerabilities": []}}
+
     first = run_sn60_challenge(
         frontier_artifact_path=str(frontier_root),
         candidate_artifact_path=str(candidate_root),
@@ -204,6 +214,7 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-a",
         public_root=str(tmp_path / "public-a"),
+        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -218,11 +229,68 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-b",
         public_root=str(tmp_path / "public-b"),
+        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
 
     assert first.primary_pool_fingerprint != second.primary_pool_fingerprint
+
+
+def test_run_sn60_challenge_stops_before_duel_when_screening_fails(
+    tmp_path: Path,
+) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    frontier_root = tmp_path / "frontier"
+    candidate_root = tmp_path / "candidate"
+    write_bundle(frontier_root, "frontier")
+    write_bundle(candidate_root, "candidate")
+
+    execution_called = False
+
+    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
+        return {"success": False, "error": "screening timeout"}
+
+    def execute(context: Sn60ReplicaContext) -> dict[str, object]:
+        nonlocal execution_called
+        execution_called = True
+        return {"success": True, "report": {"vulnerabilities": []}}
+
+    summary = run_sn60_challenge(
+        frontier_artifact_path=str(frontier_root),
+        candidate_artifact_path=str(candidate_root),
+        project_keys=["project-alpha"],
+        candidate_submission_id="miner-sn60-1",
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="sandbox-commit-1",
+        public_root=str(tmp_path / "public"),
+        screening_hook=screen,
+        execution_hook=execute,
+        evaluation_hook=lambda context, report: {"status": "success", "result": {}},
+    )
+
+    assert not execution_called
+    assert not summary.promotion_ready
+    assert "candidate failed SN60 screening" in summary.promotion_reason
+    assert Path(summary.manifest_path).name == "screening_result.json"
+
+    challenge_summary_path = Path(summary.manifest_path).with_name("challenge_summary.json")
+    assert challenge_summary_path.exists()
+
+    challenge_state = load_challenge_state(
+        SN60_MINER_LANE_ID,
+        public_root=str(tmp_path / "public"),
+    )
+    promotion_record = load_promotion_record(
+        SN60_MINER_LANE_ID,
+        public_root=str(tmp_path / "public"),
+    )
+    assert challenge_state.screening_result["status"] == "failed"
+    assert promotion_record.final_winner == "frontier"
 
 
 def build_variant(
