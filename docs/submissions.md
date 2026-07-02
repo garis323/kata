@@ -2,7 +2,7 @@
 
 Kata accepts miner agents through PR submissions in the public `kata` repo.
 
-Miners only edit `submissions/`. They do not edit `kings/`, benchmark tasks, or
+Miners only edit `submissions/`. They do not edit `kings/`, lane state, or
 validator configuration.
 
 ## Canonical Layout
@@ -35,23 +35,25 @@ This is the miner entrypoint.
 It must define:
 
 ```python
-def solve(repo_path: str, issue: str, model: str, api_base: str, api_key: str) -> dict:
+def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict:
     ...
 ```
 
+Hard compatibility floor: the sandbox runner imports `agent.py` and calls
+`agent_main()` with no arguments, so no-argument invocation must work. The
+return value must be a JSON-serializable object with a top-level
+`vulnerabilities` list (the Bitsec report schema).
+
 The validator owns:
 
-- `model`
-- `api_base`
-- `api_key`
-- timeouts
-- benchmark tasks
+- the pinned sandbox and benchmark snapshot
+- scoring (`CHUTES_API_KEY` stays validator-side)
+- timeouts and replica counts
+- lane state and the pack registry
 
-Current validator model:
-
-- `Qwen3-32B`
-
-So miners compete on agent behavior, not on private provider access.
+The miner's own execution key is injected as `INFERENCE_API_KEY` only for
+the miner execution step. Miners compete on agent behavior, not on private
+provider access.
 
 ### `agent_manifest.json`
 
@@ -104,21 +106,22 @@ A competition PR is valid only if:
 - it changes at least one agent bundle file
 - it does not edit files outside that submission directory
 - `agent.py` exists and is not the scaffold placeholder
-- `agent.py` defines `solve(...)`
+- `agent.py` defines a synchronous `agent_main(...)` that supports
+  no-argument invocation and returns a Bitsec-compatible report with a
+  top-level `vulnerabilities` list
 - `agent_manifest.json` exists and matches the validator contract
-- it targets a repo-pack that is active in the benchmark registry
-- it targets an existing benchmark repo-pack
-- the target pack already has a frontier manifest
-- the target mode is configured in that frontier manifest
+- it targets a pack that is registered and active in the central pack registry
 
 Current anti-cheat rules also reject:
 
-- challenger bundles that duplicate the current king/frontier bundle
-- invalid Python syntax in `agent.py` or helper modules
+- challenger bundles that duplicate the current lane king
+- helper files (SN60 miner submissions must stay self-contained in `agent.py`)
+- invalid Python syntax in `agent.py`
 - symlinks inside the submission bundle
 - bundles above the current file-count or size limits
 - direct references to validator/provider secret env vars
 - obvious hardcoded secret-like tokens
+- benchmark-answer leakage tokens and model sampling overrides
 
 Before checking out untrusted PR content, the bot can inspect only the changed
 paths:
@@ -141,26 +144,25 @@ uv run kata submission validate \
 After validation, Kata evaluates the candidate against the current king.
 
 ```bash
-uv run kata submission evaluate \
-  --path submissions/<repo-pack>/<mode>/<submission-id> \
-  --agent-command "$PWD/scripts/run_python_agent_eval.sh"
+KATA_SN60_PROJECT_KEYS=<project-keys> uv run kata submission evaluate \
+  --path submissions/<repo-pack>/<mode>/<submission-id> --json
 ```
 
 For the current live design:
 
-- `20` public tasks are selected randomly from the live public pool
-- `10` private tasks come from the current live holdout pool
-- each solved task is worth `1` point
+- the candidate is screened first: static checks plus one sandbox execution
+- candidate and king each run repeated replicas per benchmark codebase in the
+  pinned Bitsec sandbox
+- a codebase passes only if at least 2 of 3 runs pass
+- the aggregated score is passed codebases divided by total codebases
 
-Promotion gate:
+Promotion gate (in order):
 
-- public pool:
-  - candidate must score at least `king + 10` normalized score points
-- private pool:
-  - candidate must score at least `king + 10` normalized score points
+1. aggregated score
+2. codebases passed
+3. true positives
 
-With 20 equal-weight binary public tasks and 10 equal-weight binary holdout
-tasks, this corresponds to roughly `+2` public tasks and `+1` hidden task.
+Candidates with invalid replica runs never promote.
 
 ## Stale Frontier Protection
 

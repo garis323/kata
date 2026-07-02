@@ -4,24 +4,9 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from kata.benchmarks import render_benchmark_registry, resolve_benchmark_registry
 from kata.challenge import (
     load_challenge_summary,
     render_challenge_summary,
-    run_frontier_challenge,
-)
-from kata.eval_pack import (
-    discover_eval_pack_tasks,
-    init_eval_pack,
-    render_validation_result,
-)
-from kata.frontier import (
-    DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS,
-    DEFAULT_PROMOTION_MARGIN_POINTS,
-    init_frontier,
-    load_frontier_manifest,
-    render_frontier_json,
-    render_frontier_manifest,
 )
 from kata.lane_state import (
     LANE_METADATA_SCHEMA_VERSION,
@@ -32,11 +17,8 @@ from kata.lane_state import (
     sync_pack_registry,
     write_lane_metadata,
 )
-from kata.oracle import main as oracle_main
-from kata.reporting import render_report
 from kata.submissions import (
     SUPPORTED_SUBMISSION_MODES,
-    LanePromotionResult,
     decide_submission_action,
     evaluate_submission,
     init_submission,
@@ -68,67 +50,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     frontier_subparsers = frontier.add_subparsers(dest="frontier_command", required=True)
 
-    frontier_init = frontier_subparsers.add_parser(
-        "init", help="Create an initial king/frontier seed agent and a frontier manifest."
-    )
-    frontier_init.add_argument("--repo", required=True, help="Path or URL of the target repo.")
-    frontier_init.add_argument(
-        "--eval-pack",
-        required=True,
-        help="Path to the repo eval pack or a pack id under the benchmark registry.",
-    )
-    frontier_init.add_argument(
-        "--mode",
-        choices=["contributor", "reviewer"],
-        default="contributor",
-        help="Competition mode to initialize.",
-    )
-    frontier_init.add_argument(
-        "--registry-url",
-        default=None,
-        help="Optional SN74 registry JSON URL for seeding the frontier agent.",
-    )
-    frontier_init.add_argument(
-        "--primary-task",
-        action="append",
-        default=None,
-        help="Task id to include in the primary pool. Repeat to select multiple tasks.",
-    )
-    frontier_init.add_argument(
-        "--holdout-task",
-        action="append",
-        default=None,
-        help="Task id to include in the holdout pool. Repeat to select multiple tasks.",
-    )
-    frontier_init.add_argument(
-        "--promotion-margin-points",
-        type=float,
-        default=None,
-        help="Optional score margin the challenger must clear to replace the frontier.",
-    )
-    frontier_init.add_argument(
-        "--holdout-promotion-margin-points",
-        type=float,
-        default=None,
-        help="Optional hidden holdout score margin the challenger must clear.",
-    )
-    frontier_init.set_defaults(handler=handle_frontier_init)
-
-    frontier_show = frontier_subparsers.add_parser("show", help="Show frontier manifest details.")
-    frontier_show.add_argument(
-        "--eval-pack",
-        required=True,
-        help="Path to the repo eval pack or a pack id under the benchmark registry.",
-    )
-    frontier_show.add_argument(
-        "--mode",
-        choices=["contributor", "reviewer"],
-        default=None,
-        help="Optional mode to render.",
-    )
-    frontier_show.add_argument("--json", action="store_true")
-    frontier_show.set_defaults(handler=handle_frontier_show)
-
     frontier_promote = frontier_subparsers.add_parser(
         "promote", help="Promote a successful challenger agent into the frontier."
     )
@@ -155,98 +76,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     frontier_promote.add_argument("--json", action="store_true")
     frontier_promote.set_defaults(handler=handle_frontier_promote)
-
-    challenge = subparsers.add_parser(
-        "challenge",
-        help="Run frontier/challenger competition for one repo and mode.",
-    )
-    challenge.add_argument(
-        "--eval-pack",
-        required=True,
-        help="Path to the repo eval pack or a pack id under the benchmark registry.",
-    )
-    challenge.add_argument(
-        "--mode",
-        choices=["contributor", "reviewer"],
-        default="contributor",
-        help="Competition mode to challenge.",
-    )
-    challenge.add_argument(
-        "--candidate-agent",
-        required=True,
-        help=(
-            "Path to the challenger agent bundle directory or its `agent.py` "
-            "entrypoint."
-        ),
-    )
-    challenge.add_argument(
-        "--agent-command",
-        required=True,
-        help="Shell command used to run the agent in each workspace.",
-    )
-    challenge.add_argument(
-        "--output-root",
-        default=None,
-        help="Optional base directory for challenge artifacts. Defaults to ./runs.",
-    )
-    challenge.add_argument(
-        "--agent-timeout-seconds",
-        type=int,
-        default=None,
-        help="Optional timeout for each agent-command run.",
-    )
-    challenge.add_argument(
-        "--checks-timeout-seconds",
-        type=int,
-        default=None,
-        help="Optional timeout for each checks.sh run.",
-    )
-    challenge.set_defaults(handler=handle_challenge)
-
-    eval_pack = subparsers.add_parser("eval-pack", help="Scaffold or validate repo eval packs.")
-    eval_pack_subparsers = eval_pack.add_subparsers(dest="eval_pack_command", required=True)
-
-    eval_pack_init = eval_pack_subparsers.add_parser("init", help="Create a new eval-pack task.")
-    eval_pack_init.add_argument("--repo", required=True, help="Path or URL of the target repo.")
-    eval_pack_init.add_argument("--task-id", required=True, help="Task id for the eval case.")
-    eval_pack_init.add_argument(
-        "--output-root",
-        default=None,
-        help=(
-            "Optional benchmark registry root or benchmarks directory. "
-            "Defaults to the registry discovered via "
-            "`kata-benchmark-registry.json`."
-        ),
-    )
-    eval_pack_init.set_defaults(handler=handle_eval_pack_init)
-
-    eval_pack_validate = eval_pack_subparsers.add_parser(
-        "validate", help="Validate an eval-pack task directory."
-    )
-    eval_pack_validate.add_argument(
-        "--path",
-        required=True,
-        help="Path to the eval-pack task/pack or a pack id under the benchmark registry.",
-    )
-    eval_pack_validate.set_defaults(handler=handle_eval_pack_validate)
-
-    registry = subparsers.add_parser(
-        "registry",
-        help="Inspect the configured benchmark registry and active repo packs.",
-    )
-    registry_subparsers = registry.add_subparsers(dest="registry_command", required=True)
-
-    registry_show = registry_subparsers.add_parser(
-        "show",
-        help="Show benchmark registry metadata and active repo packs.",
-    )
-    registry_show.add_argument(
-        "--root",
-        default=None,
-        help="Optional benchmark registry root or benchmarks directory.",
-    )
-    registry_show.add_argument("--json", action="store_true")
-    registry_show.set_defaults(handler=handle_registry_show)
 
     lane = subparsers.add_parser(
         "lane",
@@ -312,17 +141,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lane_sync.add_argument("--json", action="store_true")
     lane_sync.set_defaults(handler=handle_lane_sync_registry)
-
-    report = subparsers.add_parser("report", help="Render an eval report.")
-    report.add_argument("--run", required=True, help="Run id or path to run artifacts.")
-    report.set_defaults(handler=handle_report)
-
-    oracle = subparsers.add_parser(
-        "oracle",
-        help="Run deterministic task oracle checks against a workspace.",
-    )
-    oracle.add_argument("oracle_args", nargs=argparse.REMAINDER)
-    oracle.set_defaults(handler=handle_oracle)
 
     submission = subparsers.add_parser(
         "submission",
@@ -534,37 +352,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def handle_frontier_init(args: argparse.Namespace) -> int:
-    manifest = init_frontier(
-        repo_ref=args.repo,
-        eval_pack_path=args.eval_pack,
-        mode=args.mode,
-        registry_url=args.registry_url,
-        primary_tasks=args.primary_task,
-        holdout_tasks=args.holdout_task,
-        promotion_margin_points=(
-            args.promotion_margin_points
-            if args.promotion_margin_points is not None
-            else DEFAULT_PROMOTION_MARGIN_POINTS
-        ),
-        holdout_promotion_margin_points=(
-            args.holdout_promotion_margin_points
-            if args.holdout_promotion_margin_points is not None
-            else DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS
-        ),
-    )
-    print(render_frontier_manifest(manifest, args.mode))
-    return 0
 
 
-def handle_frontier_show(args: argparse.Namespace) -> int:
-    manifest = load_frontier_manifest(args.eval_pack)
-    print(
-        render_frontier_json(manifest)
-        if args.json
-        else render_frontier_manifest(manifest, args.mode)
-    )
-    return 0
 
 
 def handle_frontier_promote(args: argparse.Namespace) -> int:
@@ -579,86 +368,34 @@ def handle_frontier_promote(args: argparse.Namespace) -> int:
         args.challenge_run,
         public_root=str(public_root),
     )
-    if isinstance(result, LanePromotionResult):
-        if args.json:
-            print_json(
-                {
-                    "lane_id": result.lane_id,
-                    "king_root": result.king_root,
-                    "current_king_submission_id": result.king.current_king_submission_id,
-                    "current_king_artifact_hash": result.king.current_king_artifact_hash,
-                    "promotion_timestamp": result.king.promotion_timestamp,
-                }
-            )
-        else:
-            print(
-                f"Promoted `{result.king.current_king_submission_id}` "
-                f"as king of lane `{result.lane_id}`."
-            )
-        return 0
-    print(
-        render_frontier_json(result)
-        if args.json
-        else render_frontier_manifest(result, summary.mode)
-    )
-    return 0
-
-
-def handle_challenge(args: argparse.Namespace) -> int:
-    summary = run_frontier_challenge(
-        eval_pack_path=args.eval_pack,
-        mode=args.mode,
-        candidate_artifact_path=args.candidate_agent,
-        agent_command=args.agent_command,
-        output_root=args.output_root,
-        agent_timeout_seconds=args.agent_timeout_seconds,
-        checks_timeout_seconds=args.checks_timeout_seconds,
-    )
-    print(render_challenge_summary(summary))
-    return 0
-
-
-def handle_eval_pack_init(args: argparse.Namespace) -> int:
-    pack_dir = init_eval_pack(args.repo, args.task_id, args.output_root)
-    print(f"Created eval pack: {pack_dir}")
-    return 0
-
-
-def handle_eval_pack_validate(args: argparse.Namespace) -> int:
-    results = discover_eval_pack_tasks(args.path)
-    print("\n\n".join(render_validation_result(result) for result in results))
-    return 0 if all(result.is_valid for result in results) else 2
-
-
-def handle_registry_show(args: argparse.Namespace) -> int:
-    registry = resolve_benchmark_registry(args.root)
     if args.json:
         print_json(
             {
-                "root": str(registry.root),
-                "benchmarks_dir": str(registry.benchmarks_dir),
-                "marker_path": str(registry.marker_path),
-                "schema_version": registry.schema_version,
-                "registry_name": registry.registry_name,
-                "active_repo_packs": list(registry.active_repo_packs),
-                "default_repo_pack": registry.default_repo_pack,
+                "lane_id": result.lane_id,
+                "king_root": result.king_root,
+                "current_king_submission_id": result.king.current_king_submission_id,
+                "current_king_artifact_hash": result.king.current_king_artifact_hash,
+                "promotion_timestamp": result.king.promotion_timestamp,
             }
         )
     else:
-        print(render_benchmark_registry(registry))
+        print(
+            f"Promoted `{result.king.current_king_submission_id}` "
+            f"as king of lane `{result.lane_id}`."
+        )
     return 0
 
 
-def handle_report(args: argparse.Namespace) -> int:
-    print(render_report(args.run))
-    return 0
 
 
-def handle_oracle(args: argparse.Namespace) -> int:
-    oracle_args = list(args.oracle_args or [])
-    if oracle_args and oracle_args[0] == "--":
-        oracle_args = oracle_args[1:]
-    return oracle_main(oracle_args)
+
+
+
+
+
+
+
+
 
 
 def handle_submission_init(args: argparse.Namespace) -> int:

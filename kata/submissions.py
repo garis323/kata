@@ -19,28 +19,15 @@ from kata.agent_bundle import (
     validate_agent_manifest,
     write_agent_manifest,
 )
-from kata.benchmarks import ensure_active_repo_pack, resolve_eval_pack_path
 from kata.challenge import (
-    SN60_MINER_LANE_ID,
-    SN60_MINER_MODE,
     SN60_VALIDATOR_MODEL,
     ChallengeSummary,
-    current_holdout_pool_fingerprint,
-    current_primary_pool_fingerprint,
-    evaluate_promotion,
     load_challenge_summary,
-    run_frontier_challenge,
     run_sn60_challenge,
 )
-from kata.config import resolve_validator_model
 from kata.evaluators.sn60_bitsec import (
     DEFAULT_REPLICAS_PER_PROJECT,
     SN60_BITSEC_EVALUATOR_ID,
-)
-from kata.frontier import (
-    load_frontier_manifest,
-    promote_frontier_artifact,
-    resolve_frontier_artifact_hash,
 )
 from kata.lane_state import (
     KING_STATE_SCHEMA_VERSION,
@@ -58,7 +45,6 @@ from kata.lane_state import (
 from kata.provenance import sha256_directory, short_hash
 from kata.public_artifacts import (
     publish_public_king,
-    resolve_artifact_path,
     resolve_kata_root,
     resolve_public_king_root,
 )
@@ -74,7 +60,7 @@ TOP_LEVEL_SUBMISSION_FILENAMES = {
     SUBMISSION_AGENT_FILENAME,
     SUBMISSION_AGENT_MANIFEST_FILENAME,
 }
-SUPPORTED_SUBMISSION_MODES = {"contributor", "miner", "reviewer"}
+SUPPORTED_SUBMISSION_MODES = {"miner"}
 DEFAULT_AGENT_PLACEHOLDER = (
     "Replace this scaffold with a real challenger agent implementation before opening a PR."
 )
@@ -124,7 +110,6 @@ FORBIDDEN_SAMPLING_NAMES = {
     "logprobs",
     "top_logprobs",
 }
-REQUIRED_SOLVE_ARGS = ("repo_path", "issue", "model", "api_base", "api_key")
 SECRET_PATTERN = re.compile(
     r"(sk-[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{10,}|hf_[A-Za-z0-9]{10,}|cpk_[A-Za-z0-9]{10,})"
 )
@@ -372,7 +357,7 @@ def validate_submission(
 def evaluate_submission(
     submission_path: str,
     *,
-    agent_command: str,
+    agent_command: str | None = None,
     output_root: str | None = None,
     agent_timeout_seconds: int | None = None,
     checks_timeout_seconds: int | None = None,
@@ -382,6 +367,7 @@ def evaluate_submission(
     sn60_benchmark_file: str | None = None,
     sn60_sandbox_commit: str | None = None,
 ) -> ChallengeSummary:
+    del agent_command, agent_timeout_seconds, checks_timeout_seconds  # legacy CLI compat
     validation = validate_submission(submission_path)
     if (
         not validation.is_valid
@@ -392,36 +378,29 @@ def evaluate_submission(
             "Submission is invalid. Run `kata submission validate` first. "
             + "; ".join(validation.reasons or ["unknown validation failure"])
         )
-
-    if is_sn60_miner_metadata(validation.metadata):
-        project_keys = sn60_project_keys or parse_sn60_project_keys_from_env()
-        if not project_keys:
-            raise ValueError(
-                "SN60 miner evaluation requires at least one project key. "
-                "Pass --sn60-project-key or set KATA_SN60_PROJECT_KEYS."
-            )
-        lane_id, frontier_artifact_path = resolve_sn60_king_artifact(validation.metadata)
-        return run_sn60_challenge(
-            frontier_artifact_path=frontier_artifact_path,
-            candidate_artifact_path=validation.submission_path,
-            project_keys=project_keys,
-            candidate_submission_id=validation.metadata.submission_id,
-            lane_id=lane_id,
-            output_root=output_root,
-            replicas_per_project=sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
-            sandbox_root=sn60_sandbox_root,
-            benchmark_file=sn60_benchmark_file,
-            sandbox_commit=sn60_sandbox_commit,
+    if not is_sn60_miner_metadata(validation.metadata):
+        raise ValueError(
+            "Submission does not target a registered SN60 evaluator lane. "
+            "Register the lane in the pack registry before evaluating."
         )
-
-    return run_frontier_challenge(
-        eval_pack_path=validation.metadata.repo_pack,
-        mode=validation.metadata.mode,
+    project_keys = sn60_project_keys or parse_sn60_project_keys_from_env()
+    if not project_keys:
+        raise ValueError(
+            "SN60 miner evaluation requires at least one project key. "
+            "Pass --sn60-project-key or set KATA_SN60_PROJECT_KEYS."
+        )
+    lane_id, frontier_artifact_path = resolve_sn60_king_artifact(validation.metadata)
+    return run_sn60_challenge(
+        frontier_artifact_path=frontier_artifact_path,
         candidate_artifact_path=validation.submission_path,
-        agent_command=agent_command,
+        project_keys=project_keys,
+        candidate_submission_id=validation.metadata.submission_id,
+        lane_id=lane_id,
         output_root=output_root,
-        agent_timeout_seconds=agent_timeout_seconds,
-        checks_timeout_seconds=checks_timeout_seconds,
+        replicas_per_project=sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
+        sandbox_root=sn60_sandbox_root,
+        benchmark_file=sn60_benchmark_file,
+        sandbox_commit=sn60_sandbox_commit,
     )
 
 
@@ -431,12 +410,8 @@ def parse_sn60_project_keys_from_env() -> list[str]:
 
 
 def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
-    # Evaluator adapters are selected by the pack registry's evaluator id;
-    # the SN60 lane id is only a fallback for pre-registry lanes.
     entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
-    if entry is not None:
-        return entry.evaluator_id == SN60_BITSEC_EVALUATOR_ID
-    return metadata.repo_pack == SN60_MINER_LANE_ID and metadata.mode == SN60_MINER_MODE
+    return entry is not None and entry.evaluator_id == SN60_BITSEC_EVALUATOR_ID
 
 
 def resolve_sn60_lane_king_hash(
@@ -472,30 +447,24 @@ def sn60_lane_benchmark_is_current(lane_id: str, summary: ChallengeSummary) -> b
 
 
 def resolve_sn60_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
-    """Resolve (lane_id, king_artifact_path) for an SN60 duel.
-
-    Registry-backed lanes use the published king under kings/<repo-pack>/<mode>/;
-    pre-registry lanes fall back to the legacy frontier manifest.
-    """
+    """Resolve (lane_id, king_artifact_path) for an SN60 duel from the pack registry."""
     entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
-    if entry is not None:
-        king_root = resolve_public_king_root(
-            public_root=None,
-            repo_pack=metadata.repo_pack,
-            mode=metadata.mode,
+    if entry is None:
+        raise ValueError(
+            "No evaluator-backed lane is registered for "
+            f"`{metadata.repo_pack}/{metadata.mode}`."
         )
-        if not (king_root / SUBMISSION_AGENT_FILENAME).exists():
-            raise ValueError(
-                f"SN60 lane king artifact is not seeded: {king_root}. "
-                "Seed the current king under kings/<repo-pack>/<mode>/ before running duels."
-            )
-        return entry.lane_id, str(king_root)
-
-    manifest = load_frontier_manifest(metadata.repo_pack)
-    mode_config = manifest.modes.get(metadata.mode)
-    if mode_config is None:
-        raise ValueError(f"Mode is not configured in frontier manifest: {metadata.mode}")
-    return metadata.repo_pack, str(resolve_artifact_path(mode_config.frontier_artifact))
+    king_root = resolve_public_king_root(
+        public_root=None,
+        repo_pack=metadata.repo_pack,
+        mode=metadata.mode,
+    )
+    if not (king_root / SUBMISSION_AGENT_FILENAME).exists():
+        raise ValueError(
+            f"SN60 lane king artifact is not seeded: {king_root}. "
+            "Seed the current king under kings/<repo-pack>/<mode>/ before running duels."
+        )
+    return entry.lane_id, str(king_root)
 
 
 def inspect_pull_request(
@@ -607,126 +576,44 @@ def verify_submission_result(
 
     summary = load_challenge_summary(challenge_summary_path)
     candidate_hash = hash_submission_bundle(Path(validation.submission_path))
-
-    if is_sn60_miner_metadata(validation.metadata):
-        evaluator_entry = find_evaluator_pack_entry(
-            validation.metadata.repo_pack, validation.metadata.mode
+    evaluator_entry = find_evaluator_pack_entry(
+        validation.metadata.repo_pack, validation.metadata.mode
+    )
+    if evaluator_entry is None:
+        raise ValueError(
+            "No evaluator-backed lane is registered for "
+            f"`{validation.metadata.repo_pack}/{validation.metadata.mode}`."
         )
-        if evaluator_entry is not None:
-            current_frontier_hash = (
-                resolve_sn60_lane_king_hash(
-                    evaluator_entry.lane_id,
-                    repo_pack=validation.metadata.repo_pack,
-                    mode=validation.metadata.mode,
-                )
-                or ""
-            )
-            lane_benchmark_is_current = sn60_lane_benchmark_is_current(
-                evaluator_entry.lane_id, summary
-            )
-        else:
-            manifest = load_frontier_manifest(validation.metadata.repo_pack)
-            mode_config = manifest.modes.get(validation.metadata.mode)
-            if mode_config is None:
-                raise ValueError(
-                    f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
-                )
-            current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
-            lane_benchmark_is_current = True
-        submission_matches = (
-            summary.mode == validation.metadata.mode
-            and summary.candidate_artifact_hash == candidate_hash
-        )
-        frontier_is_current = summary.frontier_artifact_hash == current_frontier_hash
-        benchmark_is_current = (
-            summary.validator_model == SN60_VALIDATOR_MODEL and lane_benchmark_is_current
-        )
-        current_promotion_ready = summary.promotion_ready
-
-        reasons: list[str] = []
-        if not submission_matches:
-            reasons.append("Challenge result does not match the current submission payload.")
-        if not frontier_is_current:
-            reasons.append("Challenge result is stale because the frontier artifact has changed.")
-        if not benchmark_is_current:
-            reasons.append("Challenge result is stale because the SN60 benchmark lane has changed.")
-        if not current_promotion_ready:
-            reasons.append(f"Challenge is not promotion-ready: {summary.promotion_reason}")
-
-        return SubmissionVerificationResult(
-            submission_path=validation.submission_path,
-            challenge_summary_path=str(Path(challenge_summary_path).expanduser().resolve()),
+    current_frontier_hash = (
+        resolve_sn60_lane_king_hash(
+            evaluator_entry.lane_id,
             repo_pack=validation.metadata.repo_pack,
             mode=validation.metadata.mode,
-            submission_id=validation.metadata.submission_id,
-            candidate_artifact_hash=candidate_hash,
-            recorded_candidate_artifact_hash=summary.candidate_artifact_hash,
-            current_frontier_artifact_hash=current_frontier_hash,
-            recorded_frontier_artifact_hash=summary.frontier_artifact_hash,
-            current_validator_model=SN60_VALIDATOR_MODEL,
-            recorded_validator_model=summary.validator_model,
-            submission_matches_challenge=submission_matches,
-            frontier_is_current=frontier_is_current,
-            benchmark_is_current=benchmark_is_current,
-            promotion_ready=current_promotion_ready,
-            auto_merge_ready=submission_matches
-            and frontier_is_current
-            and benchmark_is_current
-            and current_promotion_ready,
-            reasons=reasons,
         )
-
-    manifest = load_frontier_manifest(validation.metadata.repo_pack)
-    mode_config = manifest.modes.get(validation.metadata.mode)
-    if mode_config is None:
-        raise ValueError(
-            f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
-        )
-    current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
-    current_validator_model = resolve_validator_model()
-    current_primary_fingerprint = current_primary_pool_fingerprint(
-        validation.metadata.repo_pack,
-        mode_config,
-        selected_task_ids=summary.primary.task_ids,
+        or ""
     )
-    current_holdout_fingerprint = current_holdout_pool_fingerprint(
-        validation.metadata.repo_pack,
-        mode_config,
+    lane_benchmark_is_current = sn60_lane_benchmark_is_current(
+        evaluator_entry.lane_id, summary
     )
-
-    expected_manifest_path = (
-        resolve_eval_pack_path(validation.metadata.repo_pack) / "frontier.json"
-    ).resolve()
     submission_matches = (
         summary.mode == validation.metadata.mode
         and summary.candidate_artifact_hash == candidate_hash
-        and Path(summary.manifest_path).resolve() == expected_manifest_path
     )
     frontier_is_current = summary.frontier_artifact_hash == current_frontier_hash
     benchmark_is_current = (
-        summary.evaluator_version == (mode_config.evaluator_version or summary.evaluator_version)
-        and summary.validator_model == current_validator_model
-        and summary.primary_pool_fingerprint == current_primary_fingerprint
-        and summary.holdout_pool_fingerprint == current_holdout_fingerprint
+        summary.validator_model == SN60_VALIDATOR_MODEL and lane_benchmark_is_current
     )
-    current_promotion_ready, current_promotion_reason = evaluate_promotion(
-        summary.primary,
-        summary.holdout,
-        promotion_margin_points=mode_config.promotion_margin_points,
-        holdout_promotion_margin_points=mode_config.holdout_promotion_margin_points,
-    )
+    current_promotion_ready = summary.promotion_ready
 
     reasons: list[str] = []
     if not submission_matches:
         reasons.append("Challenge result does not match the current submission payload.")
     if not frontier_is_current:
         reasons.append("Challenge result is stale because the frontier artifact has changed.")
-    if summary.validator_model != current_validator_model:
-        reasons.append("Challenge result is stale because the validator model has changed.")
-    elif not benchmark_is_current:
-        reasons.append("Challenge result is stale because the benchmark lane has changed.")
+    if not benchmark_is_current:
+        reasons.append("Challenge result is stale because the SN60 benchmark lane has changed.")
     if not current_promotion_ready:
-        reasons.append(f"Challenge is not promotion-ready: {current_promotion_reason}")
+        reasons.append(f"Challenge is not promotion-ready: {summary.promotion_reason}")
 
     return SubmissionVerificationResult(
         submission_path=validation.submission_path,
@@ -738,7 +625,7 @@ def verify_submission_result(
         recorded_candidate_artifact_hash=summary.candidate_artifact_hash,
         current_frontier_artifact_hash=current_frontier_hash,
         recorded_frontier_artifact_hash=summary.frontier_artifact_hash,
-        current_validator_model=current_validator_model,
+        current_validator_model=SN60_VALIDATOR_MODEL,
         recorded_validator_model=summary.validator_model,
         submission_matches_challenge=submission_matches,
         frontier_is_current=frontier_is_current,
@@ -828,7 +715,7 @@ def promote_submission_result(
     challenge_summary_path: str,
     *,
     public_root: str | None = None,
-):
+) -> LanePromotionResult:
     verification = verify_submission_result(submission_path, challenge_summary_path)
     if not verification.auto_merge_ready:
         raise ValueError(
@@ -838,42 +725,19 @@ def promote_submission_result(
                 or ["submission result is not auto-merge ready"]
             )
         )
-
     summary = load_challenge_summary(challenge_summary_path)
     evaluator_entry = find_evaluator_pack_entry(verification.repo_pack, verification.mode)
-    if evaluator_entry is not None:
-        return promote_lane_king(
-            entry=evaluator_entry,
-            verification=verification,
-            summary=summary,
-            public_root=public_root,
+    if evaluator_entry is None:
+        raise ValueError(
+            "No evaluator-backed lane is registered for "
+            f"`{verification.repo_pack}/{verification.mode}`."
         )
-
-    eval_pack_path = (
-        verification.repo_pack
-        if verification.repo_pack == SN60_MINER_LANE_ID
-        and verification.mode == SN60_MINER_MODE
-        else Path(summary.manifest_path).parent.as_posix()
+    return promote_lane_king(
+        entry=evaluator_entry,
+        verification=verification,
+        summary=summary,
+        public_root=public_root,
     )
-    manifest = promote_frontier_artifact(
-        eval_pack_path=eval_pack_path,
-        mode=summary.mode,
-        candidate_artifact_path=verification.submission_path,
-        source=summary.run_id,
-        evaluator_version=summary.evaluator_version,
-    )
-    if public_root is not None:
-        publish_public_king(
-            public_root=public_root,
-            repo_pack=verification.repo_pack,
-            mode=verification.mode,
-            submission_id=verification.submission_id,
-            challenge_run_id=summary.run_id,
-            candidate_artifact_path=verification.submission_path,
-            frontier_artifact_hash=manifest.modes[verification.mode].frontier_artifact_hash or "",
-            candidate_artifact_hash=summary.candidate_artifact_hash,
-        )
-    return manifest
 
 
 @dataclass(frozen=True)
@@ -1161,43 +1025,18 @@ def find_evaluator_pack_entry(repo_pack: str, mode: str) -> PackRegistryEntry | 
 
 
 def validate_submission_lane(repo_pack: str, mode: str) -> list[str]:
-    # Evaluator-backed subnet packs are validated against the central pack
-    # registry and must not depend on eval-pack or frontier-manifest state.
-    evaluator_entry = find_evaluator_pack_entry(repo_pack, mode)
-    if evaluator_entry is not None:
-        if not evaluator_entry.active:
-            return [
-                "Evaluator-backed lane is not active in the pack registry: "
-                f"{evaluator_entry.lane_id}"
-            ]
-        return []
-
-    reasons: list[str] = []
-    try:
-        ensure_active_repo_pack(repo_pack)
-    except (FileNotFoundError, ValueError) as exc:
-        reasons.append(str(exc))
-        return reasons
-
-    try:
-        resolve_eval_pack_path(repo_pack)
-    except FileNotFoundError as exc:
-        reasons.append(str(exc))
-        return reasons
-
-    try:
-        manifest = load_frontier_manifest(repo_pack)
-    except FileNotFoundError:
-        reasons.append(
-            "Frontier manifest does not exist for the target repo pack. "
-            "Initialize the frontier before accepting PR submissions."
-        )
-        return reasons
-    if mode not in manifest.modes:
-        reasons.append(
-            f"Mode is not configured in the frontier manifest: {mode}"
-        )
-    return reasons
+    entry = find_evaluator_pack_entry(repo_pack, mode)
+    if entry is None:
+        return [
+            "No evaluator-backed lane is registered in the pack registry for "
+            f"`{repo_pack}/{mode}`."
+        ]
+    if not entry.active:
+        return [
+            "Evaluator-backed lane is not active in the pack registry: "
+            f"{entry.lane_id}"
+        ]
+    return []
 
 
 def resolve_submission_descriptor(
@@ -1292,56 +1131,41 @@ def default_submissions_root() -> Path:
 
 
 def default_submission_agent(mode: str) -> str:
-    if mode == "miner":
-        return (
-            "from __future__ import annotations\n\n"
-            f'\"\"\"Kata submission scaffold for the {mode} lane.\"\"\"\n\n'
-            "def agent_main(\n"
-            "    project_dir: str | None = None,\n"
-            "    inference_api: str | None = None,\n"
-            ") -> dict:\n"
-            f"    # {DEFAULT_AGENT_PLACEHOLDER}\n"
-            "    return {\n"
-            "        \"vulnerabilities\": [],\n"
-            "    }\n"
-        )
+    del mode
     return (
         "from __future__ import annotations\n\n"
-        f'\"\"\"Kata submission scaffold for the {mode} lane.\"\"\"\n\n'
-        "def solve(repo_path: str, issue: str, model: str, api_base: str, api_key: str) -> dict:\n"
+        '\"\"\"Kata submission scaffold for the miner lane.\"\"\"\n\n'
+        "def agent_main(\n"
+        "    project_dir: str | None = None,\n"
+        "    inference_api: str | None = None,\n"
+        ") -> dict:\n"
         f"    # {DEFAULT_AGENT_PLACEHOLDER}\n"
         "    return {\n"
-        "        \"success\": False,\n"
-        "        \"message\": \"scaffold agent - replace before submitting\",\n"
-        "        \"diff\": \"\",\n"
+        "        \"vulnerabilities\": [],\n"
         "    }\n"
     )
 
 
 def default_submission_notes(mode: str) -> str:
+    del mode
     lines = [
         "Recommended conventions:",
         "- author: your GitHub username",
         f"- submission_id: {SUBMISSION_ID_CONVENTION}",
         "- implement a real agent in agent.py before opening the PR",
+        "- SN60 miner submissions in V1 must stay self-contained in agent.py",
     ]
-    if mode == "miner":
-        lines.append("- SN60 miner submissions in V1 must stay self-contained in agent.py")
-    else:
-        lines.append("- optional helper modules may live under helpers/*.py")
     return "\n".join(lines) + "\n"
 
 
 def submission_entrypoint_name(mode: str) -> str:
-    if mode == "miner":
-        return "agent_main"
-    return "solve"
+    del mode
+    return "agent_main"
 
 
 def required_submission_entrypoint_reason(mode: str) -> str:
-    if mode == "miner":
-        return "Submission agent must define agent_main(...)."
-    return "Submission agent must define solve(...)."
+    del mode
+    return "Submission agent must define agent_main(...)."
 
 
 def agent_defines_required_entrypoint(agent_source: str, mode: str) -> bool:
@@ -1500,34 +1324,10 @@ def validate_bundle_entrypoint_contract(
     *,
     mode: str,
 ) -> list[str]:
-    if mode == "miner":
-        return validate_bundle_miner_contract(parsed_trees)
-    return validate_bundle_solver_contract(parsed_trees)
+    del mode
+    return validate_bundle_miner_contract(parsed_trees)
 
 
-def validate_bundle_solver_contract(parsed_trees: dict[str, ast.AST]) -> list[str]:
-    agent_tree = parsed_trees.get(AGENT_ENTRY_FILENAME)
-    if agent_tree is None:
-        return []
-    solve_fn = find_module_function_def(agent_tree, "solve")
-    if solve_fn is None:
-        return [required_submission_entrypoint_reason("contributor")]
-    if len(solve_fn.args.args) != len(REQUIRED_SOLVE_ARGS):
-        return [
-            "Submission agent must keep the validator solve signature: "
-            "solve(repo_path, issue, model, api_base, api_key)."
-        ]
-    arg_names = [arg.arg for arg in solve_fn.args.args[: len(REQUIRED_SOLVE_ARGS)]]
-    if tuple(arg_names) != REQUIRED_SOLVE_ARGS:
-        return [
-            "Submission agent must keep the validator solve signature: "
-            "solve(repo_path, issue, model, api_base, api_key)."
-        ]
-    if solve_fn.args.vararg is not None or solve_fn.args.kwarg is not None:
-        return [
-            "Submission agent must not use *args or **kwargs in solve(...)."
-        ]
-    return []
 
 
 def validate_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[str]:
@@ -1573,6 +1373,7 @@ def validate_bundle_sampling_policy(
     *,
     mode: str,
 ) -> list[str]:
+    del mode
     reasons: list[str] = []
     for relative_path, tree in sorted(parsed_trees.items()):
         for node in ast.walk(tree):
@@ -1584,34 +1385,7 @@ def validate_bundle_sampling_policy(
                         "Submission bundle must not control model sampling parameters "
                         f"directly: {relative_path} uses `{keyword.arg}`."
                     )
-        if relative_path != AGENT_ENTRY_FILENAME:
-            continue
-        solve_fn = next(
-            (
-                node
-                for node in ast.walk(tree)
-                if isinstance(node, ast.FunctionDef) and node.name == "solve"
-            ),
-            None,
-        )
-        if mode == "miner" or solve_fn is None:
-            continue
-        for node in ast.walk(solve_fn):
-            if isinstance(node, ast.Assign):
-                targets = [target.id for target in node.targets if isinstance(target, ast.Name)]
-                for target_name in targets:
-                    if target_name in {"model", "api_base", "api_key"}:
-                        reasons.append(
-                            "Submission agent must not override validator-provided routing "
-                            f"parameters inside solve(...): `{target_name}`."
-                        )
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if node.target.id in {"model", "api_base", "api_key"}:
-                    reasons.append(
-                        "Submission agent must not override validator-provided routing "
-                        f"parameters inside solve(...): `{node.target.id}`."
-                    )
-    return dedupe(reasons)
+    return reasons
 
 
 def iter_non_nested_function_returns(function_node: ast.FunctionDef):
@@ -1664,41 +1438,30 @@ def validate_submission_not_copycat(
     bundle_files: dict[str, str],
 ) -> list[str]:
     evaluator_entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
-    if evaluator_entry is not None:
-        return validate_submission_not_copycat_of_lane_king(
-            lane_id=evaluator_entry.lane_id,
-            submission_root=submission_root,
-        )
-
-    try:
-        manifest = load_frontier_manifest(metadata.repo_pack)
-    except FileNotFoundError:
+    if evaluator_entry is None:
         return []
-    mode_config = manifest.modes.get(metadata.mode)
-    if mode_config is None:
-        return []
-
-    reasons: list[str] = []
-    candidate_hash = hash_submission_bundle(submission_root)
-    frontier_hash = resolve_frontier_artifact_hash(mode_config)
-    if candidate_hash == frontier_hash:
-        reasons.append("Submission bundle is an exact copy of the current frontier artifact.")
-
-    candidate_agent = bundle_files.get(AGENT_ENTRY_FILENAME)
-    if candidate_agent is None:
-        return reasons
-
-    frontier_agent_path = (
-        resolve_artifact_path(mode_config.frontier_artifact) / AGENT_ENTRY_FILENAME
+    reasons = validate_submission_not_copycat_of_lane_king(
+        lane_id=evaluator_entry.lane_id,
+        submission_root=submission_root,
     )
-    if frontier_agent_path.exists() and python_sources_equivalent(
-        candidate_agent,
-        frontier_agent_path.read_text(encoding="utf-8"),
-    ):
-        reasons.append(
-            "Submission agent duplicates the current frontier agent implementation."
+    candidate_agent = bundle_files.get(AGENT_ENTRY_FILENAME)
+    if candidate_agent is not None:
+        king_agent_path = (
+            resolve_public_king_root(
+                public_root=None,
+                repo_pack=metadata.repo_pack,
+                mode=metadata.mode,
+            )
+            / AGENT_ENTRY_FILENAME
         )
-    return reasons
+        if king_agent_path.exists() and python_sources_equivalent(
+            candidate_agent,
+            king_agent_path.read_text(encoding="utf-8"),
+        ):
+            reasons.append(
+                "Submission agent duplicates the current lane king implementation."
+            )
+    return dedupe(reasons)
 
 
 def validate_submission_not_copycat_of_lane_king(

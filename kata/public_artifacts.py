@@ -6,8 +6,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from kata.agent_bundle import load_bundle_files, replace_bundle_contents
-from kata.benchmarks import KATA_REPO_ROOT
 
+KATA_REPO_ROOT = Path(__file__).resolve().parents[1]
 KATA_ROOT_ENV = "KATA_ROOT"
 KATA_ARTIFACT_SCHEME = "kata://"
 PUBLIC_KINGS_DIRNAME = "kings"
