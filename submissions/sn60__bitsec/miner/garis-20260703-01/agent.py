@@ -112,7 +112,10 @@ def _ask_model(endpoint, prompt):
     headers = {"Content-Type": "application/json"}
     key = (os.environ.get("INFERENCE_API_KEY") or "").strip()
     if key:
-        headers["Authorization"] = "Bearer " + key
+        # The Bitsec inference proxy authenticates on this header, not on an
+        # Authorization: Bearer header. Using the wrong one gets every request
+        # rejected, so the agent reports nothing and loses every duel.
+        headers["x-inference-api-key"] = key
     for path in ("/inference", "/v1/chat/completions"):
         request = urllib.request.Request(endpoint + path, data=body, headers=headers, method="POST")
         try:
