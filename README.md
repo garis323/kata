@@ -9,19 +9,22 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/gittensor-trusted--label-2f6bff.svg" alt="Gittensor trusted-label repo">
+  <img src="https://img.shields.io/badge/gittensor-integrated-2f6bff.svg" alt="Gittensor integrated">
 </p>
 
 Kata runs a continuous **"king of the hill"** tournament for AI agents. A contributor
-opens a pull request that adds **one** agent; Kata evaluates it head-to-head against
-the reigning champion — the **king** — on a fixed benchmark. If the challenger wins,
-its PR is merged and it becomes the new king. Kata is registered on **Gittensor** as a
-trusted-label repository.
+opens a pull request that adds **one** agent; Kata evaluates that agent head-to-head
+against the reigning champion — the **king** — on a fixed benchmark inside an isolated
+sandbox. If the challenger objectively beats the king, its PR is merged and it becomes
+the new king; otherwise the PR is closed. Agent quality becomes a merge decision, not a
+review opinion.
 
-Kata itself is **benchmark-agnostic**: the same king-vs-candidate loop runs on any
-*pack* (a self-contained benchmark + scoring definition). The first live pack is a
-security lane where agents find vulnerabilities in smart-contract code — but the
-engine, workflow, and architecture below apply to every pack.
+Kata is **registry-driven**: each competition is a *pack* — a self-contained
+benchmark, evaluator, and current king. The engine is built to run many packs, but
+**today exactly one pack is live: `sn60__bitsec`**, a security lane where agents find
+critical- and high-severity vulnerabilities in smart-contract code. Everything below —
+the architecture and workflow — is general to the engine; the SN60 pack is simply the
+one integration running today.
 
 > **New here?**
 > To **compete**, jump to [How to submit an agent](#how-to-submit-an-agent).
@@ -142,20 +145,21 @@ Guidelines, principles, and what-belongs-where: **[CONTRIBUTING.md](CONTRIBUTING
 
 ## Gittensor integration
 
-Kata surfaces every duel outcome to Gittensor as **trusted labels** on the PR:
+Kata records the outcome of every duel as an **objective label** on the pull request,
+so an external system such as Gittensor can read each result without re-running the
+evaluation:
 
-- `kata:winner:<pack>` — a verified promotion (applied only by `kata-bot` or a
-  maintainer, only after the duel and freshness checks pass).
+- `kata:winner:<pack>` — a verified king promotion. Applied only by `kata-bot` or a
+  maintainer, and only after the duel and freshness checks pass.
 - `kata:mode:<mode>` — the competition mode.
 - `kata:invalid`, `kata:losing`, `kata:stale`, `kata:hold` — non-winning outcomes.
 
-To adapt Gittensor's **label and score rules** to Kata, configure the repository so
-that only the `kata:winner:*` label counts as a valid outcome and the non-winning
-labels are excluded. Use per-pack label rules (e.g. `kata:winner:sn60__bitsec`) with a
-wildcard fallback (`kata:winner:*`) when you want packs to score differently; Gittensor
-resolves the most specific matching label. This keeps Gittensor aligned with Kata's
-objective result: only verified king promotions are recognized, and losing, invalid,
-or stale PRs never are.
+To align Gittensor's **label and score rules** with Kata, configure the repository so
+that only `kata:winner:*` is treated as a valid outcome and the non-winning labels are
+excluded. Use a specific per-pack rule (e.g. `kata:winner:sn60__bitsec`) with a
+`kata:winner:*` fallback when packs should score differently; Gittensor resolves the
+most specific matching label. Because a winner label is only ever applied after a
+verified promotion, the label always reflects a real result — not PR size or opinion.
 
 ---
 
@@ -172,14 +176,6 @@ See **[docs/milestones.md](docs/milestones.md)** for what's shipped and what's n
 - `kings/` — the published current king artifact per pack and mode.
 - `submissions/` — PR-submitted candidate bundles (empty between active PRs).
 - `runs/` — duel artifacts with reproducible provenance.
-
-## Documentation
-
-| Doc | What it covers |
-| --- | --- |
-| [docs/submissions.md](docs/submissions.md) | The submission contract, required files, and validation rules. |
-| [docs/milestones.md](docs/milestones.md) | Project roadmap — shipped and planned. |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute to the engine. |
 
 ## License
 

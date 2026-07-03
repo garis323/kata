@@ -1,43 +1,53 @@
 # Roadmap & Milestones
 
-Where Kata is today and where it's going. Kata is built to be benchmark-agnostic, so
-most work falls into two tracks: **making the core competition loop more trustworthy**
-and **bringing new packs onto the same engine**.
+Kata is built to run many competition packs on one engine. This page tracks what is
+running today and what is planned next.
 
-## Shipped
+## Current status
 
-- **Core engine** — pack registry, lane state, the king-vs-candidate duel, screening,
-  and promotion, all driven through a single registry.
-- **First live pack** — a security lane where agents are evaluated in a pinned,
-  version-locked sandbox.
+**One pack is live: `sn60__bitsec` (miner mode).** It is the only competition
+registered and active in `lanes/registry.json`, and it runs the full loop end-to-end
+in production. The engine is pack-agnostic underneath, but SN60 is the single
+integration live today.
+
+Working today:
+
+- **Full competition loop** — submit → validate → screen → duel → decide → verify →
+  promote — driven through the pack registry.
 - **Isolated, fair execution** — agents run in an internet-blocked sandbox and are
-  pinned to one fixed model, so the king and every challenger are judged on identical
-  footing.
+  pinned to one fixed model, so the king and every challenger are judged identically.
+- **Strict, objective promotion** — a challenger is promoted only if it beats the king
+  on the comparator (aggregated score, then codebases passed, then true positives),
+  and never if it has an invalid run.
 - **GitHub automation** — webhook intake, a durable PR queue, and a resident service
-  that runs the engine end-to-end, comments results, and applies trusted labels.
-- **Dashboard** — live evaluation status and current-king state.
-- **Reproducible provenance** — every duel records benchmark and artifact hashes, and
-  a freshness check re-runs a result rather than merging it if the king or benchmark
+  that runs the engine, comments results, and applies outcome labels.
+- **Reproducible provenance** — every duel records benchmark and artifact hashes; a
+  freshness check re-runs a result rather than merging it if the king or benchmark
   changed underneath it.
-- **Faster decisive duels** — clearly-decided challengers can be resolved without
+- **Dashboard** — live evaluation status and current-king state.
+- **Faster decisive duels** — a clearly-decided challenger can be resolved without
   running the entire benchmark, while genuine contenders are always evaluated in full.
 
-## In progress
+## Goals
 
-- Broader benchmark coverage within the first pack.
-- Hardening of submission validation and anti-cheat checks.
+### Grow the competition surface
 
-## Planned
+- Broaden benchmark coverage within the SN60 pack.
+- Add new evaluator packs by registering them — no engine rewrite.
+- Run multiple packs side by side, each with its own king and isolated state.
 
-- **Additional packs** — bring new benchmarks onto the same engine through the
-  registry, with no engine rewrite.
-- **Additional subnet lanes** — run several packs side by side, each with its own
-  king and state.
-- **Dashboard enhancements** — richer history and per-pack leaderboards.
-- **Operator tooling** — smoother setup and observability for running a Kata instance.
+### Strengthen trust
 
-## How to propose a milestone
+- Harden submission validation and anti-cheat checks.
+- Expand provenance and freshness guarantees as pack count grows.
 
-Open an issue describing the change and the problem it solves. Changes to the
+### Improve the experience
+
+- Dashboard: result history and per-pack leaderboards.
+- Operator tooling: smoother setup and clearer observability for running an instance.
+
+## Proposing a milestone
+
+Open an issue describing the change and the problem it solves. Any change to the
 evaluator, screening, or promotion logic should come with tests that prove the new
 behavior — see [CONTRIBUTING.md](../CONTRIBUTING.md).
