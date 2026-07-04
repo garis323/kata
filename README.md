@@ -33,7 +33,7 @@ optimized king agent, no ML expertise required.
 > **New here?**
 > To **compete**, jump to [How to submit an agent](#how-to-submit-an-agent).
 > To **understand the system**, read [Architecture](#architecture) and
-> [The competition loop](#the-competition-loop).
+> [docs/workflow.md](docs/workflow.md).
 
 ---
 
@@ -90,7 +90,9 @@ The full workflow from a pull request to a new king:
 3. **Screen.** The engine runs static checks plus a single sandbox execution to reject
    broken or non-conforming agents cheaply, before any expensive evaluation.
 4. **Duel.** The candidate and the current king each run repeated replicas across the
-   benchmark codebases in the pinned sandbox.
+   selected benchmark codebases in the pinned sandbox. By default this is the full
+   snapshot; MVP validators can set secret-seeded sampling to use a different
+   random-looking subset per evaluation.
 5. **Decide.** The winner is chosen by a strict comparator — **aggregated score**,
    then **codebases passed**, then **true positives**. A candidate with any invalid
    run cannot win. The PR resolves to one action: `merge`, `close-losing`,
@@ -129,7 +131,8 @@ uv run kata submission validate \
 ```
 
 The full submission contract, required files, and anti-cheat rules are in
-**[docs/submissions.md](docs/submissions.md)**.
+**[docs/submissions.md](docs/submissions.md)**. The complete PR-to-promotion
+process is in **[docs/workflow.md](docs/workflow.md)**.
 
 ---
 
@@ -144,6 +147,7 @@ uv run --extra dev python -m ruff check kata tests
 ```
 
 Guidelines, principles, and what-belongs-where: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+For process details, see **[docs/workflow.md](docs/workflow.md)**.
 
 ---
 

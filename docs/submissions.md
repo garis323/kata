@@ -1,13 +1,30 @@
-# Submission Workflow
+# Submission Guide
 
-Kata accepts miner agents through PR submissions in the public `kata` repo.
+This document is the contributor-facing contract for miner submissions. It lists
+what a valid Kata submission must contain, what is rejected, and what to check
+before opening a pull request.
 
-Miners only edit `submissions/`. They do not edit `kings/`, lane state, or
-validator configuration.
+For the full PR-to-promotion process, see [workflow.md](workflow.md).
 
-## Canonical Layout
+## Current Scope
 
-Each miner PR should add or update exactly one submission directory:
+The live lane is:
+
+```text
+sn60__bitsec / miner
+```
+
+Current submission scope:
+
+- Python-only miner agents
+- one submission directory per PR
+- one subnet-pack and mode per submission
+- self-contained SN60 agents in `agent.py`
+- no API keys, benchmark answers, helper files, or validator configuration
+
+## Directory Layout
+
+A valid PR adds exactly one submission directory:
 
 ```text
 submissions/
@@ -19,102 +36,63 @@ submissions/
         submission.json
 ```
 
-Current scope:
+For SN60 today:
 
-- Python agent bundles
-- one submission directory per PR
-- one subnet-pack lane per submission
+```text
+submissions/sn60__bitsec/miner/<submission-id>/
+```
+
+Recommended `submission_id` format:
+
+```text
+<github-username>-YYYYMMDD-NN
+```
+
+Example:
+
+```text
+alice-20260704-01
+```
 
 ## Required Files
 
 ### `agent.py`
 
-This is the miner entrypoint.
+`agent.py` is the only executable miner code in the bundle.
 
-It must define:
+It must define a synchronous function named `agent_main`:
 
 ```python
 def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict:
-    ...
+    return {"vulnerabilities": []}
 ```
 
-Hard compatibility floor: the sandbox runner imports `agent.py` and calls
-`agent_main()` with no arguments, so no-argument invocation must work. The
-return value must be a JSON-serializable object with a top-level
-`vulnerabilities` list (the Bitsec report schema).
+Requirements:
 
-The validator owns:
-
-- the pinned sandbox and benchmark snapshot
-- both inference keys — `INFERENCE_API_KEY` (agent inference) and
-  `CHUTES_API_KEY` (scoring) — and the fixed agent model
-- timeouts and replica counts
-- lane state and the pack registry
-
-**Miners submit only an agent — no API keys.** The validator funds all inference
-and pins the model, so every candidate runs on the same model as the king. Miners
-compete on agent behavior, not on budget or private provider access.
-
-## Inference contract (how your agent calls the model)
-
-Your agent runs in a sandbox with **no internet access** — the only endpoint it can
-reach is the inference proxy the validator provides. Call it exactly as follows.
-
-- **Endpoint:** `POST <inference_api>/inference`, where `inference_api` is the value
-  passed to `agent_main(..., inference_api=...)` (also available as the
-  `INFERENCE_API` environment variable). Do **not** hardcode a provider URL.
-- **Auth header:** send the key in the **`x-inference-api-key`** header — read it from
-  the `INFERENCE_API_KEY` environment variable. **Do not use `Authorization: Bearer`;
-  the proxy ignores it and rejects the request with HTTP 422.**
-- **Request body:** OpenAI chat-completions shape — `{"messages": [...], "max_tokens": N}`.
-  **Do not set `model`** — the validator pins the model, and anything you send is
-  overridden. Extra fields (`temperature`, `tools`, …) are passed through.
-- **Response body:** OpenAI shape — read the text from
-  `response["choices"][0]["message"]["content"]`.
-
-Minimal working call (standard library only):
-
-```python
-import json, os, urllib.request
-
-def ask_model(inference_api, prompt):
-    endpoint = (inference_api or os.environ.get("INFERENCE_API") or "").rstrip("/")
-    body = json.dumps({
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 4000,
-    }).encode()
-    request = urllib.request.Request(
-        endpoint + "/inference",
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "x-inference-api-key": os.environ.get("INFERENCE_API_KEY", ""),  # NOT Authorization
-        },
-    )
-    with urllib.request.urlopen(request, timeout=600) as response:
-        data = json.loads(response.read().decode())
-    return data["choices"][0]["message"]["content"]
-```
-
-> **Failures are silent.** If your agent can't reach the model it will just return an
-> empty `vulnerabilities` list, which is a valid run that finds nothing — and a
-> candidate that finds nothing cannot beat the king. Always **test locally** and
-> confirm you get real findings before opening a PR.
+- `agent_main` must be callable with no arguments.
+- It must return a JSON-serializable dictionary.
+- The returned dictionary must include a top-level `vulnerabilities` list.
+- The file must contain valid Python syntax.
+- The file must not be the scaffold placeholder.
+- The implementation must be self-contained for SN60 V1.
 
 ### `agent_manifest.json`
 
-This describes the bundle contract.
+`agent_manifest.json` declares the bundle runtime contract.
 
-Current requirements:
+Required values:
 
-- `schema_version = 1`
-- `runtime = "python"`
-- `entrypoint = "agent.py"`
+```json
+{
+  "schema_version": 1,
+  "runtime": "python",
+  "entrypoint": "agent.py"
+}
+```
 
 ### `submission.json`
 
-This identifies the target competition lane.
+`submission.json` identifies the target lane and submission metadata.
 
 Example:
 
@@ -123,148 +101,166 @@ Example:
   "schema_version": 2,
   "subnet_pack": "sn60__bitsec",
   "mode": "miner",
-  "submission_id": "carlos4s-20260629-01",
-  "created_at": "2026-06-29T00:00:00+00:00",
-  "author": "carlos4s",
+  "submission_id": "alice-20260704-01",
+  "created_at": "2026-07-04T00:00:00+00:00",
+  "author": "alice",
   "title": "short optional title",
   "notes": "short optional notes"
 }
 ```
 
-`subnet_pack` is the canonical field. Older `repo_pack` metadata is still
-accepted as a legacy alias so existing submissions and lane files do not break.
+Requirements:
 
-Recommended identity convention:
+- `schema_version` must be `2`.
+- `subnet_pack` should be `sn60__bitsec` for the live lane.
+- `mode` must be `miner`.
+- `submission_id` should match the directory name.
+- `author` should be the GitHub username.
 
-- `author`: GitHub username
-- `submission_id`: `<github-username>-YYYYMMDD-NN`
+`subnet_pack` is the canonical field. The older `repo_pack` field is accepted
+only as a legacy alias.
 
-## Validation Rules
+## Inference Contract
 
-A competition PR is valid only if:
+The validator pays for inference and pins the model. Miners submit agent logic,
+not API keys or provider configuration.
 
-- it targets the default competition branch
-- it edits one submission directory
-- it changes at least one agent bundle file
-- it does not edit files outside that submission directory
-- `agent.py` exists and is not the scaffold placeholder
-- `agent.py` defines a synchronous `agent_main(...)` that supports
-  no-argument invocation and returns a Bitsec-compatible report with a
-  top-level `vulnerabilities` list
-- `agent_manifest.json` exists and matches the validator contract
-- it targets a pack that is registered and active in the central pack registry
+Your agent runs in an isolated sandbox with no public internet access. It can
+only reach the validator-provided inference proxy.
 
-Current anti-cheat rules also reject:
+Use this contract:
 
-- challenger bundles that duplicate the current lane king
-- helper files (SN60 miner submissions must stay self-contained in `agent.py`)
-- invalid Python syntax in `agent.py`
-- symlinks inside the submission bundle
-- bundles above the current file-count or size limits
-- direct references to validator/provider secret env vars
-- obvious hardcoded secret-like tokens
-- benchmark-answer leakage tokens and model sampling overrides
+- Endpoint: `POST <inference_api>/inference`
+- `inference_api`: use the `agent_main(..., inference_api=...)` argument, or the
+  `INFERENCE_API` environment variable
+- Auth header: `x-inference-api-key`
+- API key source: `INFERENCE_API_KEY` environment variable
+- Request body: OpenAI chat-completions shape, for example
+  `{"messages": [...], "max_tokens": 4000}`
+- Do not set or depend on `model`; the validator pins it
+- Response body: read `choices[0].message.content`
 
-Before checking out untrusted PR content, the bot can inspect only the changed
-paths:
+Do not use `Authorization: Bearer`; the proxy expects `x-inference-api-key`.
 
-```bash
-uv run kata submission inspect-pr \
-  --repo-root "$PWD" \
-  --changed-path-file /path/to/changed-paths.txt
+Minimal standard-library example:
+
+```python
+import json
+import os
+import urllib.request
+
+
+def ask_model(inference_api, prompt):
+    endpoint = (inference_api or os.environ.get("INFERENCE_API") or "").rstrip("/")
+    body = json.dumps(
+        {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 4000,
+        }
+    ).encode()
+    request = urllib.request.Request(
+        endpoint + "/inference",
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "x-inference-api-key": os.environ.get("INFERENCE_API_KEY", ""),
+        },
+    )
+    with urllib.request.urlopen(request, timeout=600) as response:
+        data = json.loads(response.read().decode())
+    return data["choices"][0]["message"]["content"]
 ```
 
-Validate a checked-out submission bundle:
+If the model call fails and your agent returns an empty `vulnerabilities` list,
+the run may still be valid but will find nothing. Test locally before opening a
+PR.
+
+## PR Rules
+
+A valid miner PR must:
+
+- target the default competition branch
+- touch exactly one submission directory
+- change at least one bundle file
+- avoid edits outside that submission directory
+- include only allowed bundle files
+- keep `submissions/` as the only miner-edited top-level area
+- not edit `kings/`, `lanes/`, evaluator code, tests, docs, or deployment files
+
+## Validation Checklist
+
+Before opening a PR, verify:
+
+- `agent.py` exists.
+- `agent.py` defines synchronous `agent_main`.
+- `agent_main` works with no arguments.
+- `agent_main` returns `{"vulnerabilities": [...]}`.
+- `agent_manifest.json` uses schema version `1`, runtime `python`, entrypoint
+  `agent.py`.
+- `submission.json` uses schema version `2`, `subnet_pack`, mode `miner`, and a
+  unique `submission_id`.
+- No helper files are included.
+- No symlinks are included.
+- No hardcoded API keys or provider tokens are included.
+- No validator-only environment variables are referenced.
+- No benchmark answers, oracle files, or private scorer data are referenced.
+- No model sampling overrides are hardcoded.
+- The bundle stays under current size and file-count limits.
+
+Run local validation:
 
 ```bash
 uv run kata submission validate \
-  --path submissions/<subnet-pack>/<mode>/<submission-id>
+  --path submissions/sn60__bitsec/miner/<submission-id>
 ```
 
-## Evaluation Flow
+## Rejection Conditions
 
-After validation, Kata evaluates the candidate against the current king.
+Kata rejects submissions for:
+
+- invalid PR shape
+- more than one submission directory
+- off-scope file changes
+- missing required files
+- invalid metadata
+- invalid Python syntax
+- async-only `agent_main`
+- required positional arguments that prevent no-argument invocation
+- missing top-level `vulnerabilities` list
+- scaffold or duplicate current-king agents
+- helper files in SN60 V1 bundles
+- symlinks
+- oversized bundles
+- hardcoded secret-like values
+- references to validator/provider secret env vars
+- benchmark-answer leakage indicators
+- provider endpoint or model override attempts
+
+## Scoring Conditions
+
+Validation only determines whether the candidate may be evaluated. Promotion is
+decided later by the workflow in [workflow.md](workflow.md).
+
+High-level promotion requirements:
+
+- screening must pass
+- candidate must have zero invalid replica runs
+- candidate must strictly beat the current king
+- the result must still be fresh at merge time
+
+## Quick Start
 
 ```bash
-uv run kata submission evaluate \
-  --path submissions/<subnet-pack>/<mode>/<submission-id> --json
+uv run kata submission init \
+  --subnet-pack sn60__bitsec \
+  --mode miner \
+  --submission-id <github-user>-YYYYMMDD-01
+
+# edit the generated agent.py
+
+uv run kata submission validate \
+  --path submissions/sn60__bitsec/miner/<github-user>-YYYYMMDD-01
 ```
 
-For the current live design:
-
-- the candidate is screened first: static checks plus one sandbox execution
-- candidate and king each run repeated replicas per benchmark codebase in the
-  pinned Bitsec sandbox
-- if no explicit SN60 project keys are provided, Kata evaluates every
-  `project_id` in the resolved benchmark snapshot
-- a codebase passes only if at least 2 of 3 runs pass
-- the aggregated score is passed codebases divided by total codebases
-
-Promotion gate (in order):
-
-1. aggregated score
-2. codebases passed
-3. true positives
-
-Candidates with invalid replica runs never promote.
-
-## Stale King Protection
-
-Results are only safe to merge if the lane has not changed since evaluation.
-
-Kata checks that with:
-
-```bash
-uv run kata submission verify \
-  --path submissions/<subnet-pack>/<mode>/<submission-id> \
-  --challenge-run runs/<challenge-run>/challenge_summary.json
-```
-
-Verification checks that:
-
-- the submission hash still matches the evaluated candidate
-- the king artifact hash is still current
-- the evaluator version is still current
-- the validator model is still current
-- the benchmark lane fingerprint is still current
-- the challenge itself is promotion-ready
-
-If any of those drift, the result is stale and should be rerun.
-
-## PR Decision Actions
-
-After verification, Kata reduces the result to one PR action:
-
-```bash
-uv run kata submission decide \
-  --path submissions/<subnet-pack>/<mode>/<submission-id> \
-  --challenge-run runs/<challenge-run>/challenge_summary.json
-```
-
-Possible actions are:
-
-- `close-invalid`
-- `close-losing`
-- `rerun-stale`
-- `merge`
-
-## Promotion
-
-If the decision is `merge`, the bot or maintainer can promote the verified
-submission:
-
-```bash
-uv run kata king promote \
-  --challenge-run <challenge-summary.json> \
-  --submission-path <submission-dir>
-```
-
-The production bot does more than promotion:
-
-1. merge the winning PR
-2. update the king under `kings/<subnet-pack>/<mode>/`
-3. update the lane king state
-4. clear the merged `submissions/.../<submission-id>/` directory from `main`
-
-So `submissions/` stays empty between active miner PRs, while `kings/` remains
-the public source of truth for the current winner.
+Then commit the one submission directory and open a PR.

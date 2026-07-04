@@ -23,6 +23,9 @@ uv run --extra dev python -m ruff check kata tests
 If you change the evaluator adapter, screening, or promotion logic, add or
 update tests.
 
+For the full miner PR lifecycle, evaluation stages, promotion flow, and engine
+contribution workflow, see `docs/workflow.md`.
+
 ## What belongs where
 
 - Engine changes: `kata/`
