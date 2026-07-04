@@ -80,9 +80,12 @@ Execution screening then requires one valid Bitsec-style report:
 - sandbox execution must complete successfully within the validator screening
   timeout
 - report must contain a top-level `vulnerabilities` list
-- the list must contain at least one candidate finding
-- each finding must include a title and useful description
-- optional severity must be `critical`, `high`, `medium`, or `low`
+- the list must contain at least one candidate high/critical finding
+- each finding must include a title
+- each finding must include `severity: "high"` or `severity: "critical"`
+- each finding must include a useful description of at least 80 characters
+- each finding must include a source location hint, either in `file`, `path`,
+  or `location`, or by naming a source file such as `Vault.sol` or `program.rs`
 - reports are capped at 100 findings
 
 Empty screening reports are rejected as no-op submissions. Agents should not

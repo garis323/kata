@@ -73,6 +73,7 @@ def agent_main(project_dir: str | None = None, inference_api: str | None = None)
                     "account, allowing unauthorized changes to protected settings."
                 ),
                 "severity": "high",
+                "file": "contracts/Admin.sol",
             }
         ]
     }
@@ -83,6 +84,8 @@ Requirements:
 - `agent_main` must be callable with no arguments.
 - It must return a JSON-serializable dictionary.
 - The returned dictionary must include a top-level `vulnerabilities` list.
+- Each screening finding must describe a plausible high or critical security
+  issue and include a source location hint.
 - Screening rejects direct no-op returns such as `{"vulnerabilities": []}`.
 - The file must contain valid Python syntax.
 - The file must not be the scaffold placeholder.
@@ -181,7 +184,7 @@ def ask_model(inference_api, prompt):
             "x-inference-api-key": os.environ.get("INFERENCE_API_KEY", ""),
         },
     )
-    with urllib.request.urlopen(request, timeout=600) as response:
+    with urllib.request.urlopen(request, timeout=120) as response:
         data = json.loads(response.read().decode())
     return data["choices"][0]["message"]["content"]
 ```
@@ -207,10 +210,14 @@ Your submission should pass these checks:
 - The one screening sandbox run finishes successfully.
 - The screening sandbox run finishes before the validator timeout.
 - The screening report is a JSON object with a top-level `vulnerabilities` list.
-- The screening report contains at least one candidate vulnerability.
+- The screening report contains at least one candidate high/critical
+  vulnerability.
 - Each candidate finding is a JSON object with a non-empty `title`.
-- Each candidate finding has a useful `description` of at least 40 characters.
-- If `severity` is present, use `critical`, `high`, `medium`, or `low`.
+- Each candidate finding has `severity` set to `critical` or `high`.
+- Each candidate finding has a useful `description` of at least 80 characters.
+- Each candidate finding includes a source location hint, either in a `file`,
+  `path`, or `location` field, or by naming a source file such as `Vault.sol`
+  or `program.rs` in the title/description.
 - Do not return more than 100 candidate findings from screening.
 
 The screening finding does not guarantee a true positive. It only proves the
@@ -273,6 +280,8 @@ Kata rejects submissions for:
 - direct empty-report or no-op `agent_main` implementations
 - empty screening reports
 - screening findings without a title or useful description
+- screening findings without `high` or `critical` severity
+- screening findings without a source location hint
 - screening reports with more than 100 findings
 - scaffold or duplicate current-king agents
 - helper files in SN60 V1 bundles

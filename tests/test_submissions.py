@@ -51,6 +51,7 @@ VALID_MINER_AGENT = (
     "                \"account, allowing unauthorized changes to protected protocol settings.\"\n"
     "            ),\n"
     "            \"severity\": \"high\",\n"
+    "            \"file\": \"contracts/Admin.sol\",\n"
     "        }],\n"
     "    }\n"
 )
@@ -390,6 +391,7 @@ def run_registry_lane_sn60_duel(tmp_path: Path, monkeypatch, *, agent_source=VAL
                         "title": "Missing access control on privileged update",
                         "description": SCREENING_DESCRIPTION,
                         "severity": "high",
+                        "file": "contracts/Admin.sol",
                     }
                 ]
             },
@@ -869,6 +871,7 @@ def test_promote_records_published_king_hash_for_non_normalized_agent(
         "            \"account, allowing unauthorized changes to protected protocol settings.\"\n"
         "        ),\n"
         "        \"severity\": \"high\",\n"
+        "        \"file\": \"contracts/Admin.sol\",\n"
         "    }]}"  # no trailing newline
     )
     assert not non_normalized.endswith("\n")

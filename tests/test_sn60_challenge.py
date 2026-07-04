@@ -31,6 +31,7 @@ VALID_SCREENING_REPORT = {
             "title": "Missing access control on privileged update",
             "description": SCREENING_DESCRIPTION,
             "severity": "high",
+            "file": "contracts/Admin.sol",
         }
     ]
 }

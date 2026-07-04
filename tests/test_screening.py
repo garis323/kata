@@ -19,13 +19,15 @@ VALID_FINDING = {
     "title": "Missing access control on privileged update",
     "description": SCREENING_DESCRIPTION,
     "severity": "high",
+    "file": "contracts/Admin.sol",
 }
 VALID_AGENT_SOURCE = (
     "def agent_main(project_dir=None, inference_api=None):\n"
     "    return {'vulnerabilities': [{"
     "'title': 'Missing access control on privileged update', "
     f"'description': {SCREENING_DESCRIPTION!r}, "
-    "'severity': 'high'}]}\n"
+    "'severity': 'high', "
+    "'file': 'contracts/Admin.sol'}]}\n"
 )
 
 
@@ -269,3 +271,80 @@ def test_run_sn60_screening_rejects_thin_finding_description(tmp_path: Path) -> 
 
     assert not result.passed
     assert any("useful description" in reason for reason in result.reasons)
+
+
+def test_run_sn60_screening_rejects_missing_or_low_severity(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    bundle_root = tmp_path / "candidate"
+    write_bundle(bundle_root, VALID_AGENT_SOURCE)
+
+    result = run_sn60_screening(
+        candidate_artifact_path=str(bundle_root),
+        project_key="project-alpha",
+        output_root=str(tmp_path / "runs"),
+        sandbox_source=source,
+        execution_hook=lambda _context: {
+            "success": True,
+            "report": {
+                "vulnerabilities": [
+                    {
+                        "title": "Low issue",
+                        "description": SCREENING_DESCRIPTION,
+                        "severity": "low",
+                        "file": "contracts/Admin.sol",
+                    },
+                    {
+                        "title": "Missing severity",
+                        "description": SCREENING_DESCRIPTION,
+                        "file": "contracts/Admin.sol",
+                    },
+                ]
+            },
+        },
+    )
+
+    assert not result.passed
+    assert any("unsupported severity `low`" in reason for reason in result.reasons)
+    assert any("must include severity `high` or `critical`" in reason for reason in result.reasons)
+
+
+def test_run_sn60_screening_rejects_missing_source_location(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    bundle_root = tmp_path / "candidate"
+    write_bundle(bundle_root, VALID_AGENT_SOURCE)
+
+    result = run_sn60_screening(
+        candidate_artifact_path=str(bundle_root),
+        project_key="project-alpha",
+        output_root=str(tmp_path / "runs"),
+        sandbox_source=source,
+        execution_hook=lambda _context: {
+            "success": True,
+            "report": {
+                "vulnerabilities": [
+                    {
+                        "title": "Missing access control on privileged update",
+                        "description": SCREENING_DESCRIPTION,
+                        "severity": "high",
+                    }
+                ]
+            },
+        },
+    )
+
+    assert not result.passed
+    assert any("source location hint" in reason for reason in result.reasons)

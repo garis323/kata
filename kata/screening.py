@@ -32,9 +32,14 @@ SN60_SCREENING_STATUS_FAILED = "failed"
 SN60_SCREENING_STAGE_STATIC = "static"
 SN60_SCREENING_STAGE_EXECUTION = "execution"
 SN60_SCREENING_MAX_FINDINGS = 100
+SN60_SCREENING_MIN_DESCRIPTION_CHARS = 80
 SN60_SCREENING_TIMEOUT_ENV = "KATA_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS"
 DEFAULT_SN60_SCREENING_EXECUTION_TIMEOUT_SECONDS = 5 * 60
-VALID_SCREENING_SEVERITIES = {"critical", "high", "medium", "low"}
+VALID_SCREENING_SEVERITIES = {"critical", "high"}
+SOURCE_LOCATION_PATTERN = re.compile(
+    r"\b[\w./-]+\.(?:sol|vy|rs|move|cairo|fe)\b",
+    re.IGNORECASE,
+)
 
 BENCHMARK_LEAK_TOKENS = (
     "curated-highs-only",
@@ -295,17 +300,39 @@ def validate_sn60_screening_report(report_payload: dict[str, object]) -> list[st
         description = str(finding.get("description") or "").strip()
         if not title:
             reasons.append(f"SN60 screening finding #{index} must include a non-empty title.")
-        if len(description) < 40:
+        if len(description) < SN60_SCREENING_MIN_DESCRIPTION_CHARS:
             reasons.append(
                 f"SN60 screening finding #{index} must include a useful description "
-                "(at least 40 characters)."
+                f"(at least {SN60_SCREENING_MIN_DESCRIPTION_CHARS} characters)."
             )
         severity = str(finding.get("severity") or "").strip().lower()
-        if severity and severity not in VALID_SCREENING_SEVERITIES:
+        if not severity:
+            reasons.append(
+                f"SN60 screening finding #{index} must include severity `high` or `critical`."
+            )
+        elif severity not in VALID_SCREENING_SEVERITIES:
             reasons.append(
                 f"SN60 screening finding #{index} has unsupported severity `{severity}`."
             )
+        if not has_source_location_hint(finding):
+            reasons.append(
+                f"SN60 screening finding #{index} must include a source location hint "
+                "such as `Vault.sol`, `program.rs`, or a non-empty `file` field."
+            )
     return dedupe(reasons)
+
+
+def has_source_location_hint(finding: dict[str, object]) -> bool:
+    explicit_location = str(
+        finding.get("file") or finding.get("path") or finding.get("location") or ""
+    ).strip()
+    if explicit_location:
+        return True
+    searchable = " ".join(
+        str(finding.get(key) or "")
+        for key in ("title", "description", "function", "contract")
+    )
+    return bool(SOURCE_LOCATION_PATTERN.search(searchable))
 
 
 def agent_main_returns_direct_empty_report(agent_main: ast.FunctionDef) -> bool:
@@ -397,9 +424,3 @@ def sn60_screening_freshness_fingerprint(
 def build_sn60_screening_id() -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"sn60-screening-{timestamp}-{secrets.token_hex(3)}"
-
-
-
-
-
-
