@@ -1315,6 +1315,7 @@ def validate_bundle_python_sources(bundle_files: dict[str, str]) -> list[str]:
             )
             continue
         temp_path: Path | None = None
+        bytecode_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
                 "w",
@@ -1324,13 +1325,16 @@ def validate_bundle_python_sources(bundle_files: dict[str, str]) -> list[str]:
             ) as handle:
                 handle.write(content)
                 temp_path = Path(handle.name)
-            py_compile.compile(str(temp_path), doraise=True)
-        except py_compile.PyCompileError:
+            bytecode_path = temp_path.with_suffix(".pyc")
+            py_compile.compile(str(temp_path), cfile=str(bytecode_path), doraise=True)
+        except (OSError, py_compile.PyCompileError):
             reasons.append(
                 "Submission bundle failed Python compile smoke check in "
                 f"{relative_path}."
             )
         finally:
+            if bytecode_path is not None:
+                bytecode_path.unlink(missing_ok=True)
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
     agent_source = bundle_files.get(AGENT_ENTRY_FILENAME, "")

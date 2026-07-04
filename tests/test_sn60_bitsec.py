@@ -15,14 +15,12 @@ from kata.evaluators.sn60_bitsec import (
     extract_evaluation_metrics,
     load_sn60_benchmark_project_keys,
     project_passes,
-    resolve_sn60_early_stop,
     resolve_sn60_inference_api,
     resolve_sn60_proxy_network,
     resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
     sn60_codebase_pass_count,
     sn60_synthetic_ids,
-    split_projects_for_early_stop,
 )
 
 
@@ -783,7 +781,7 @@ def test_default_execution_hook_refuses_non_internal_network(
     assert docker_ran["value"] is False
 
 
-# --- two-phase early-stop ---------------------------------------------------
+# --- full-grid duel execution -----------------------------------------------
 
 
 def _replica(project_key: str, result: str | None, status: str = "success") -> Sn60ReplicaResult:
@@ -838,75 +836,6 @@ def _passfail_hooks(*, king_pass: bool, candidate_pass: bool, candidate_status: 
     return executed, execute, evaluate
 
 
-def _run_early_stop_duel(tmp_path, monkeypatch, *, project_keys, phase1, margin, hooks):
-    executed, execute, evaluate = hooks
-    monkeypatch.setenv("KATA_SN60_EARLY_STOP", "1")
-    monkeypatch.setenv("KATA_SN60_EARLY_STOP_PHASE1", str(phase1))
-    monkeypatch.setenv("KATA_SN60_EARLY_STOP_MARGIN", str(margin))
-    sandbox_root = tmp_path / "sandbox"
-    benchmark_path = _make_multi_project_benchmark(sandbox_root, project_keys)
-    king_root = tmp_path / "king"
-    candidate_root = tmp_path / "candidate"
-    write_bundle(king_root, agent_source="def agent_main():\n    return {}\n")
-    write_bundle(candidate_root, agent_source="def agent_main():\n    return {}\n")
-    summary = run_sn60_bitsec_duel(
-        king_artifact_path=str(king_root),
-        candidate_artifact_path=str(candidate_root),
-        project_keys=project_keys,
-        output_root=str(tmp_path / "runs"),
-        replicas_per_project=1,
-        sandbox_root=str(sandbox_root),
-        benchmark_file=str(benchmark_path),
-        sandbox_commit="commit-early-stop",
-        execution_hook=execute,
-        evaluation_hook=evaluate,
-    )
-    early_stop_path = Path(summary.output_root) / "early_stop.json"
-    info = (
-        json.loads(early_stop_path.read_text(encoding="utf-8"))
-        if early_stop_path.exists()
-        else None
-    )
-    return summary, executed, info
-
-
-def test_resolve_early_stop_is_none_when_disabled(monkeypatch) -> None:
-    monkeypatch.delenv("KATA_SN60_EARLY_STOP", raising=False)
-    assert resolve_sn60_early_stop(32) is None
-
-
-def test_resolve_early_stop_defaults_and_overrides(monkeypatch) -> None:
-    monkeypatch.setenv("KATA_SN60_EARLY_STOP", "1")
-    monkeypatch.delenv("KATA_SN60_EARLY_STOP_PHASE1", raising=False)
-    monkeypatch.delenv("KATA_SN60_EARLY_STOP_MARGIN", raising=False)
-    config = resolve_sn60_early_stop(32)
-    assert config is not None
-    assert config.phase1_size == 16  # half of 32
-    assert config.loss_margin == 6
-
-    monkeypatch.setenv("KATA_SN60_EARLY_STOP_PHASE1", "20")
-    monkeypatch.setenv("KATA_SN60_EARLY_STOP_MARGIN", "4")
-    config = resolve_sn60_early_stop(32)
-    assert config.phase1_size == 20
-    assert config.loss_margin == 4
-
-    # phase1 is clamped to [1, total-1] so phase 2 is never empty.
-    monkeypatch.setenv("KATA_SN60_EARLY_STOP_PHASE1", "99")
-    assert resolve_sn60_early_stop(8).phase1_size == 7
-
-
-def test_split_projects_is_stable_and_partitions_all_keys() -> None:
-    keys = [f"project-{i:02d}" for i in range(10)]
-    p1_a, p2_a = split_projects_for_early_stop(keys, seed="king-hash|cand-hash", phase1_size=4)
-    p1_b, p2_b = split_projects_for_early_stop(keys, seed="king-hash|cand-hash", phase1_size=4)
-    assert (p1_a, p2_a) == (p1_b, p2_b)  # deterministic for the same seed
-    assert len(p1_a) == 4 and len(p2_a) == 6
-    assert sorted(p1_a + p2_a) == sorted(keys)  # a true partition
-    # A different seed generally yields a different phase-1 subset.
-    p1_c, _ = split_projects_for_early_stop(keys, seed="other-seed", phase1_size=4)
-    assert set(p1_c) != set(p1_a)
-
-
 def test_codebase_pass_count_uses_two_thirds_rule() -> None:
     results = [
         _replica("a", "PASS"),
@@ -916,76 +845,10 @@ def test_codebase_pass_count_uses_two_thirds_rule() -> None:
     assert sn60_codebase_pass_count(results) == 1  # only "a" passes
 
 
-def test_early_stop_triggers_on_decisive_loss(tmp_path, monkeypatch) -> None:
-    keys = [f"project-{i:02d}" for i in range(6)]
-    summary, executed, info = _run_early_stop_duel(
-        tmp_path,
-        monkeypatch,
-        project_keys=keys,
-        phase1=3,
-        margin=2,
-        hooks=_passfail_hooks(king_pass=True, candidate_pass=False),
-    )
-    distinct_projects = {project for _, project in executed}
-    assert len(distinct_projects) == 3  # phase 2 was skipped
-    assert len(summary.project_keys) == 3
-    assert info["early_stopped"] is True
-    assert "decisive loss" in info["reason"]
-    assert info["gap"] == -3
-
-
-def test_early_stop_triggers_on_candidate_invalid_run(tmp_path, monkeypatch) -> None:
-    keys = [f"project-{i:02d}" for i in range(6)]
-    # Margin is high enough that only the invalid-run rule can fire.
-    summary, executed, info = _run_early_stop_duel(
-        tmp_path,
-        monkeypatch,
-        project_keys=keys,
-        phase1=3,
-        margin=10,
-        hooks=_passfail_hooks(king_pass=True, candidate_pass=False, candidate_status="error"),
-    )
-    distinct_projects = {project for _, project in executed}
-    assert len(distinct_projects) == 3
-    assert info["early_stopped"] is True
-    assert "invalid" in info["reason"]
-    assert info["candidate_invalid_runs_phase1"] == 3
-
-
-def test_early_stop_never_short_circuits_a_win(tmp_path, monkeypatch) -> None:
-    keys = [f"project-{i:02d}" for i in range(6)]
-    summary, executed, info = _run_early_stop_duel(
-        tmp_path,
-        monkeypatch,
-        project_keys=keys,
-        phase1=3,
-        margin=2,
-        hooks=_passfail_hooks(king_pass=False, candidate_pass=True),
-    )
-    distinct_projects = {project for _, project in executed}
-    assert len(distinct_projects) == 6  # full benchmark ran
-    assert len(summary.project_keys) == 6
-    assert info["early_stopped"] is False
-
-
-def test_early_stop_runs_full_grid_when_borderline(tmp_path, monkeypatch) -> None:
-    keys = [f"project-{i:02d}" for i in range(6)]
-    summary, executed, info = _run_early_stop_duel(
-        tmp_path,
-        monkeypatch,
-        project_keys=keys,
-        phase1=3,
-        margin=2,
-        hooks=_passfail_hooks(king_pass=True, candidate_pass=True),
-    )
-    distinct_projects = {project for _, project in executed}
-    assert len(distinct_projects) == 6
-    assert info["early_stopped"] is False
-    assert info["gap"] == 0
-
-
-def test_early_stop_disabled_writes_no_sidecar_and_runs_full(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("KATA_SN60_EARLY_STOP", raising=False)
+def test_duel_ignores_legacy_early_stop_env_and_runs_full_grid(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("KATA_SN60_EARLY_STOP", "1")
+    monkeypatch.setenv("KATA_SN60_EARLY_STOP_PHASE1", "1")
+    monkeypatch.setenv("KATA_SN60_EARLY_STOP_MARGIN", "1")
     keys = [f"project-{i:02d}" for i in range(4)]
     executed, execute, evaluate = _passfail_hooks(king_pass=True, candidate_pass=False)
     sandbox_root = tmp_path / "sandbox"

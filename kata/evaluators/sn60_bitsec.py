@@ -26,8 +26,6 @@ DEFAULT_REPLICAS_PER_PROJECT = 3
 DEFAULT_BENCHMARK_FILENAME = "curated-highs-only-2025-08-08.json"
 DEFAULT_EXECUTION_SUBPROCESS_TIMEOUT_SECONDS = 35 * 60
 DEFAULT_EVALUATION_SUBPROCESS_TIMEOUT_SECONDS = 60 * 60
-# Phase-1 codebase-pass deficit at which a candidate is treated as a decisive loss.
-DEFAULT_EARLY_STOP_LOSS_MARGIN = 6
 
 
 @dataclass(frozen=True)
@@ -169,26 +167,6 @@ Sn60ExecutionHook = Callable[[Sn60ReplicaContext], dict[str, object]]
 Sn60EvaluationHook = Callable[[Sn60ReplicaContext, dict[str, object]], dict[str, object]]
 
 
-@dataclass(frozen=True)
-class Sn60EarlyStopConfig:
-    phase1_size: int
-    loss_margin: int
-
-
-def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(name: str, default: int) -> int:
-    value = os.environ.get(name)
-    if value and value.strip():
-        try:
-            return int(value.strip())
-        except ValueError:
-            return default
-    return default
-
-
 def _env_positive_float(name: str, default: float) -> float:
     value = os.environ.get(name)
     if value and value.strip():
@@ -199,47 +177,6 @@ def _env_positive_float(name: str, default: float) -> float:
         if parsed > 0:
             return parsed
     return default
-
-
-def resolve_sn60_early_stop(total_projects: int) -> Sn60EarlyStopConfig | None:
-    """Two-phase early-stop config, or None when disabled.
-
-    Opt-in via ``KATA_SN60_EARLY_STOP``. When enabled, the duel scores a phase-1
-    subset first and short-circuits only a decisive candidate *loss* (a promotion
-    always runs the full benchmark). ``KATA_SN60_EARLY_STOP_PHASE1`` sets the
-    phase-1 project count (default: half, rounded up); ``KATA_SN60_EARLY_STOP_MARGIN``
-    sets the phase-1 codebase-pass deficit that counts as decisive.
-    """
-    if not _env_flag("KATA_SN60_EARLY_STOP"):
-        return None
-    if total_projects < 2:
-        return None
-    default_phase1 = (total_projects + 1) // 2
-    phase1_size = _env_int("KATA_SN60_EARLY_STOP_PHASE1", default_phase1)
-    phase1_size = max(1, min(phase1_size, total_projects - 1))
-    loss_margin = max(1, _env_int("KATA_SN60_EARLY_STOP_MARGIN", DEFAULT_EARLY_STOP_LOSS_MARGIN))
-    return Sn60EarlyStopConfig(phase1_size=phase1_size, loss_margin=loss_margin)
-
-
-def split_projects_for_early_stop(
-    project_keys: list[str],
-    *,
-    seed: str,
-    phase1_size: int,
-) -> tuple[list[str], list[str]]:
-    """Split projects into (phase1, phase2) with a stable, seed-shuffled order.
-
-    Seeding on the duel's artifact hashes keeps the split identical across reruns
-    of the same pairing (so freshness fingerprints stay stable) while making it
-    unpredictable across candidates. It is not sorted by difficulty, so phase 1 is
-    a representative sample rather than an easy/hard slice.
-    """
-    ordered = sorted(
-        project_keys,
-        key=lambda key: hashlib.sha256(f"{seed}\x1f{key}".encode()).hexdigest(),
-    )
-    phase1_size = max(1, min(phase1_size, len(ordered) - 1))
-    return ordered[:phase1_size], ordered[phase1_size:]
 
 
 def sn60_codebase_pass_count(replica_results: list[Sn60ReplicaResult]) -> int:
@@ -314,61 +251,9 @@ def run_sn60_bitsec_duel(
             eval_max_vulns=eval_max_vulns,
         )
 
-    early_stop = resolve_sn60_early_stop(len(project_keys))
-    early_stop_info: dict[str, object] | None = None
-    if early_stop is None:
-        king_results = _run_phase(list(project_keys), "king", king_root)
-        candidate_results = _run_phase(list(project_keys), "candidate", candidate_root)
-        executed_keys = list(project_keys)
-    else:
-        phase1_keys, phase2_keys = split_projects_for_early_stop(
-            project_keys,
-            seed=f"{king_hash}\x1f{candidate_hash}",
-            phase1_size=early_stop.phase1_size,
-        )
-        king_results = _run_phase(phase1_keys, "king", king_root)
-        candidate_results = _run_phase(phase1_keys, "candidate", candidate_root)
-        king_pass = sn60_codebase_pass_count(king_results)
-        candidate_pass = sn60_codebase_pass_count(candidate_results)
-        candidate_invalid = sum(
-            1 for result in candidate_results if result.evaluation_status != "success"
-        )
-        gap = candidate_pass - king_pass
-        # Only ever short-circuit a LOSS. A promotion must run the full benchmark
-        # and the full zero-invalid-run gate, so wins and borderline duels always
-        # continue to phase 2.
-        if candidate_invalid > 0:
-            early_stopped = True
-            stop_reason = "candidate produced an invalid phase-1 run (guaranteed loss)"
-        elif gap <= -early_stop.loss_margin:
-            early_stopped = True
-            stop_reason = f"candidate trails king by {-gap} codebases in phase 1 (decisive loss)"
-        else:
-            early_stopped = False
-            stop_reason = "phase 1 not decisive; ran the full benchmark"
-
-        if early_stopped:
-            executed_keys = phase1_keys
-        else:
-            king_results = king_results + _run_phase(phase2_keys, "king", king_root)
-            candidate_results = candidate_results + _run_phase(
-                phase2_keys, "candidate", candidate_root
-            )
-            executed_keys = phase1_keys + phase2_keys
-
-        early_stop_info = {
-            "phase1_size": early_stop.phase1_size,
-            "loss_margin": early_stop.loss_margin,
-            "phase1_project_keys": sorted(phase1_keys),
-            "king_codebase_pass_count_phase1": king_pass,
-            "candidate_codebase_pass_count_phase1": candidate_pass,
-            "candidate_invalid_runs_phase1": candidate_invalid,
-            "gap": gap,
-            "early_stopped": early_stopped,
-            "reason": stop_reason,
-        }
-
-    executed_set = set(executed_keys)
+    king_results = _run_phase(list(project_keys), "king", king_root)
+    candidate_results = _run_phase(list(project_keys), "candidate", candidate_root)
+    executed_set = set(project_keys)
     ordered_executed_keys = [key for key in project_keys if key in executed_set]
 
     king_summary = summarize_variant(
@@ -396,8 +281,6 @@ def run_sn60_bitsec_duel(
         candidate=candidate_summary,
     )
     write_sn60_duel_summary(run_root / "duel_summary.json", summary)
-    if early_stop_info is not None:
-        write_json(run_root / "early_stop.json", early_stop_info)
     return summary
 
 
