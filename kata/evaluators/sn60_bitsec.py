@@ -188,7 +188,7 @@ def _env_positive_float(name: str, default: float) -> float:
 
 
 def sn60_codebase_pass_count(replica_results: list[Sn60ReplicaResult]) -> int:
-    """Number of distinct projects that pass the 2/3-replica rule."""
+    """Number of distinct projects that pass the configured replica threshold."""
     passes = 0
     for project_key in {result.project_key for result in replica_results}:
         project_replicas = [r for r in replica_results if r.project_key == project_key]
@@ -626,9 +626,10 @@ def summarize_project(
 
 
 def project_passes(*, pass_count: int, replica_count: int) -> bool:
-    """Codebase-level binary pass per the SN60 rule: at least 2 of 3 runs must pass.
+    """Codebase-level binary PASS using the configured replica count.
 
-    Generalized to other replica counts as pass_count/replica_count >= 2/3.
+    The default production setting is one replica, so 1/1 passes. If operators
+    raise replicas, this preserves the historical two-thirds majority threshold.
     """
     if replica_count <= 0:
         return False

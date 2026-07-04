@@ -524,7 +524,7 @@ def test_malformed_agent_report_is_recorded_failure_not_a_crash(
     assert good == {"success": True, "report": {}}
 
 
-def test_project_passes_requires_two_of_three_runs() -> None:
+def test_project_passes_uses_configured_replica_threshold() -> None:
     assert project_passes(pass_count=2, replica_count=3)
     assert project_passes(pass_count=3, replica_count=3)
     assert not project_passes(pass_count=1, replica_count=3)
@@ -911,13 +911,13 @@ def _passfail_hooks(*, king_pass: bool, candidate_pass: bool, candidate_status: 
     return executed, execute, evaluate
 
 
-def test_codebase_pass_count_uses_two_thirds_rule() -> None:
+def test_codebase_pass_count_uses_configured_replica_threshold() -> None:
     results = [
         _replica("a", "PASS"),
         _replica("b", "FAIL"),
         _replica("c", None, status="error"),
     ]
-    assert sn60_codebase_pass_count(results) == 1  # only "a" passes
+    assert sn60_codebase_pass_count(results) == 1
 
 
 def test_duel_ignores_legacy_early_stop_env_and_runs_full_grid(tmp_path, monkeypatch) -> None:
