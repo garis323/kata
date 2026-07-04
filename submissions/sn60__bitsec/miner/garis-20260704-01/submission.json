@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "mode": "miner",
+  "submission_id": "garis-20260704-01",
+  "created_at": "2026-07-04T06:12:20.551532+00:00",
+  "author": "garis",
+  "title": "garis candidate agent",
+  "notes": "Recommended conventions:\n- author: your GitHub username\n- submission_id: <github-username>-YYYYMMDD-NN\n- implement a real agent in agent.py before opening the PR\n- SN60 miner submissions in V1 must stay self-contained in agent.py\n",
+  "subnet_pack": "sn60__bitsec"
+}
