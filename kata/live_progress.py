@@ -46,7 +46,9 @@ def write_status(path: Path, payload: dict[str, Any]) -> None:
     ) as handle:
         temp_path = Path(handle.name)
         handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temp_path.chmod(0o644)
     os.replace(temp_path, path)
+    path.chmod(0o644)
 
 
 def merge_status(current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
