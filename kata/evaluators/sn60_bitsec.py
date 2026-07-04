@@ -943,12 +943,17 @@ def build_bitsec_evaluation_command(context: Sn60ReplicaContext) -> list[str]:
 # expose them.
 VALIDATOR_ONLY_SECRET_ENV_VARS = (
     "CHUTES_API_KEY",
+    "KATA_SN60_PROJECT_SAMPLE_SECRET",
     "KATA_VALIDATOR_API_KEY",
 )
 
 
 def default_subprocess_env() -> dict[str, str]:
-    return dict(os.environ)
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name != "KATA_SN60_PROJECT_SAMPLE_SECRET"
+    }
 
 
 def execution_subprocess_env() -> dict[str, str]:

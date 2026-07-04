@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import py_compile
 import re
+import secrets
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -79,6 +81,8 @@ PR_ACTION_EVALUATE = "evaluate"
 PR_ACTION_CLOSE_LOSING = "close-losing"
 PR_ACTION_RERUN_STALE = "rerun-stale"
 PR_ACTION_MERGE = "merge"
+SN60_PROJECT_SAMPLE_SIZE_ENV = "KATA_SN60_PROJECT_SAMPLE_SIZE"
+SN60_PROJECT_SAMPLE_SECRET_ENV = "KATA_SN60_PROJECT_SAMPLE_SECRET"
 MAX_SUBMISSION_BUNDLE_FILES = 16
 MAX_SUBMISSION_FILE_BYTES = 64 * 1024
 MAX_SUBMISSION_BUNDLE_BYTES = 128 * 1024
@@ -394,18 +398,21 @@ def evaluate_submission(
             "Submission does not target a registered SN60 evaluator lane. "
             "Register the lane in the pack registry before evaluating."
         )
+    lane_id, king_artifact_path = resolve_sn60_king_artifact(validation.metadata)
     project_keys = resolve_sn60_project_keys(
         configured_keys=sn60_project_keys,
         sandbox_root=sn60_sandbox_root,
         benchmark_file=sn60_benchmark_file,
         sandbox_commit=sn60_sandbox_commit,
+        king_artifact_hash=hash_submission_bundle(Path(king_artifact_path)),
+        candidate_artifact_hash=hash_submission_bundle(Path(validation.submission_path)),
+        candidate_submission_id=validation.metadata.submission_id,
     )
     if not project_keys:
         raise ValueError(
             "SN60 miner evaluation requires at least one project key in the "
             "resolved benchmark snapshot."
         )
-    lane_id, king_artifact_path = resolve_sn60_king_artifact(validation.metadata)
     return run_sn60_challenge(
         king_artifact_path=king_artifact_path,
         candidate_artifact_path=validation.submission_path,
@@ -425,12 +432,30 @@ def parse_sn60_project_keys_from_env() -> list[str]:
     return [part.strip() for part in configured.split(",") if part.strip()]
 
 
+def parse_sn60_project_sample_size_from_env() -> int | None:
+    value = os.environ.get(SN60_PROJECT_SAMPLE_SIZE_ENV, "")
+    if not value.strip():
+        return None
+    try:
+        sample_size = int(value.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"{SN60_PROJECT_SAMPLE_SIZE_ENV} must be a positive integer."
+        ) from exc
+    if sample_size <= 0:
+        raise ValueError(f"{SN60_PROJECT_SAMPLE_SIZE_ENV} must be greater than 0.")
+    return sample_size
+
+
 def resolve_sn60_project_keys(
     *,
     configured_keys: list[str] | None,
     sandbox_root: str | None,
     benchmark_file: str | None,
     sandbox_commit: str | None,
+    king_artifact_hash: str | None = None,
+    candidate_artifact_hash: str | None = None,
+    candidate_submission_id: str | None = None,
 ) -> list[str]:
     explicit_keys = configured_keys or parse_sn60_project_keys_from_env()
     if explicit_keys:
@@ -441,7 +466,56 @@ def resolve_sn60_project_keys(
         sandbox_commit=sandbox_commit,
         scorer_version="ScaBenchScorerV2",
     )
-    return load_sn60_benchmark_project_keys(sandbox_source)
+    benchmark_keys = load_sn60_benchmark_project_keys(sandbox_source)
+    sample_size = parse_sn60_project_sample_size_from_env()
+    if sample_size is None or sample_size >= len(benchmark_keys):
+        return benchmark_keys
+    sample_secret = os.environ.get(SN60_PROJECT_SAMPLE_SECRET_ENV, "")
+    if not sample_secret.strip():
+        raise ValueError(
+            f"{SN60_PROJECT_SAMPLE_SECRET_ENV} must be set when "
+            f"{SN60_PROJECT_SAMPLE_SIZE_ENV} narrows the SN60 benchmark."
+        )
+    return sample_sn60_project_keys(
+        benchmark_keys,
+        sample_size=sample_size,
+        sample_secret=sample_secret.strip(),
+        sample_nonce=secrets.token_hex(16),
+        king_artifact_hash=king_artifact_hash or "",
+        candidate_artifact_hash=candidate_artifact_hash or "",
+        candidate_submission_id=candidate_submission_id or "",
+    )
+
+
+def sample_sn60_project_keys(
+    project_keys: list[str],
+    *,
+    sample_size: int,
+    sample_secret: str,
+    sample_nonce: str,
+    king_artifact_hash: str,
+    candidate_artifact_hash: str,
+    candidate_submission_id: str,
+) -> list[str]:
+    if sample_size <= 0:
+        raise ValueError("SN60 project sample size must be greater than 0.")
+    ordered_keys = list(dict.fromkeys(project_keys))
+    if sample_size >= len(ordered_keys):
+        return ordered_keys
+    seed = "\x1f".join(
+        [
+            sample_secret,
+            sample_nonce,
+            king_artifact_hash,
+            candidate_artifact_hash,
+            candidate_submission_id,
+        ]
+    )
+    ordered = sorted(
+        ordered_keys,
+        key=lambda key: hashlib.sha256(f"{seed}\x1f{key}".encode()).hexdigest(),
+    )
+    return ordered[:sample_size]
 
 
 def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
