@@ -121,7 +121,7 @@ Requirements:
 - The file must not be the scaffold placeholder.
 - The implementation must be self-contained for SN60 V1.
 - Be efficient: your agent has both a per-problem **runtime** budget and a hard
-  per-problem **inference** budget (3 model calls / 12,000 output tokens — see
+  per-problem **inference** budget (3 model calls / 24,000 output tokens — see
   "Inference budget" below), so prioritise the most suspicious files first.
   Exhausting either budget just scores 0 for that problem — it does not close your PR.
 
@@ -199,7 +199,7 @@ problem, enforced at the proxy** — you cannot exceed it no matter what your
 
 - **Per call:** at most **32,000 output tokens**. The proxy clamps `max_tokens` down
   to this ceiling, so requesting more has no effect.
-- **Per problem (one codebase):** at most **3 model calls** and **12,000 output
+- **Per problem (one codebase):** at most **3 model calls** and **24,000 output
   tokens total** across those calls. When either limit is reached, further calls
   return HTTP `429` and your agent must finalize with what it already found.
 
