@@ -64,8 +64,8 @@ DEFAULT_MAX_OUTPUT_TOKENS = 32000
 # serial (one agent container at a time), so the budget window is keyed by the
 # calling container's address and reset whenever a new container starts calling.
 # 0 disables a limit. Override with KATA_RELAY_AGENT_TOKEN_BUDGET / _CALL_BUDGET.
-DEFAULT_AGENT_TOKEN_BUDGET = 60000
-DEFAULT_AGENT_CALL_BUDGET = 8
+DEFAULT_AGENT_TOKEN_BUDGET = 40000
+DEFAULT_AGENT_CALL_BUDGET = 3
 
 # Only this path carries a model to overwrite; everything else is forwarded as-is.
 INFERENCE_PATH = "/inference"

@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from kata.sn60_model_relay import (
+    AGENT_BUDGET,
     COST_METER,
     DEFAULT_PINNED_MODEL,
     DEFAULT_UPSTREAM,
@@ -189,6 +190,7 @@ class _RecordingUpstream(BaseHTTPRequestHandler):
 @pytest.fixture
 def relay_and_upstream(monkeypatch):
     COST_METER.reset()  # process-wide meter; keep each test independent
+    AGENT_BUDGET.reset()  # process-wide per-agent budget; isolate each test
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
     upstream.records = []  # type: ignore[attr-defined]
     upstream.daemon_threads = True
@@ -222,8 +224,6 @@ def _post(url: str, body: bytes, headers: dict[str, str] | None = None):
 
 
 def test_inference_budget_refuses_agent_after_call_limit(relay_and_upstream, monkeypatch) -> None:
-    from kata.sn60_model_relay import AGENT_BUDGET
-
     base, upstream = relay_and_upstream
     AGENT_BUDGET.reset()
     monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "2")
