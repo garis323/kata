@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
-from kata.cli import build_parser, main
+import pytest
+
+from kata.cli import build_parser, main, parse_round_candidate
 
 
 def test_top_level_cli_exposes_agent_competition_commands() -> None:
@@ -15,7 +18,7 @@ def test_top_level_cli_exposes_agent_competition_commands() -> None:
     )
     commands = set(subparser_action.choices)
 
-    assert {"king", "submission", "lane"} == commands
+    assert {"king", "submission", "lane", "round"} == commands
 
 
 def test_lane_cli_registers_and_lists_packs(tmp_path: Path, capsys) -> None:
@@ -144,3 +147,63 @@ def test_lane_cli_sync_registry_rebuilds_from_disk(tmp_path: Path, capsys) -> No
     assert main(["lane", "sync-registry", "--public-root", str(tmp_path), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["packs"] == ["sn60__bitsec"]
+
+
+def test_parse_round_candidate_accepts_id_path_pairs() -> None:
+    assert parse_round_candidate("cand-1=/tmp/agent") == ("cand-1", "/tmp/agent")
+    assert parse_round_candidate(" cand-2 = /tmp/x ") == ("cand-2", "/tmp/x")
+
+
+def test_parse_round_candidate_rejects_malformed_specs() -> None:
+    for bad in ("no-equals", "=only-path", "only-id="):
+        with pytest.raises(SystemExit):
+            parse_round_candidate(bad)
+
+
+def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None:
+    import kata.cli as cli
+
+    fake_result = types.SimpleNamespace(
+        run_id="sn60-round-x",
+        output_root="/tmp/runs/sn60-round-x",
+        winner_submission_id="cand-b",
+        promotion_ready=True,
+        promotion_reason="cand-b beat the current SN60 king",
+        king=types.SimpleNamespace(aggregated_score=0.25, true_positives=1, total_expected=4),
+        entries=[
+            types.SimpleNamespace(
+                submission_id="cand-b",
+                beats_king=True,
+                duel_run_id="d-1",
+                candidate=types.SimpleNamespace(
+                    aggregated_score=0.5, true_positives=2, invalid_runs=0
+                ),
+            )
+        ],
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_sn60_round(**kwargs):
+        captured.update(kwargs)
+        return fake_result
+
+    monkeypatch.setattr(cli, "run_sn60_round", fake_run_sn60_round)
+
+    exit_code = main(
+        [
+            "round",
+            "--king-path", "/king",
+            "--candidate", "cand-b=/c-b",
+            "--sn60-project-key", "project-alpha",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["candidates"] == [("cand-b", "/c-b")]
+    assert captured["project_keys"] == ["project-alpha"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["winner_submission_id"] == "cand-b"
+    assert payload["promotion_ready"] is True
+    assert payload["entries"][0]["submission_id"] == "cand-b"
+    assert payload["entries"][0]["beats_king"] is True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -422,6 +423,146 @@ def sn60_variant_rank(summary: Sn60VariantSummary) -> tuple[float, int, float, f
         round(summary.f1_score, 8),
         -summary.invalid_runs,
     )
+
+
+DEFAULT_SN60_ROUND_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True)
+class Sn60RoundEntry:
+    submission_id: str
+    artifact_path: str
+    artifact_hash: str
+    beats_king: bool
+    duel_run_id: str
+    candidate: Sn60VariantSummary
+
+
+@dataclass(frozen=True)
+class Sn60RoundResult:
+    schema_version: int
+    run_id: str
+    created_at: str
+    output_root: str
+    project_keys: list[str]
+    replicas_per_project: int
+    sandbox_source: Sn60SandboxSource
+    king: Sn60VariantSummary
+    entries: list[Sn60RoundEntry]
+    winner_submission_id: str | None
+    promotion_ready: bool
+    promotion_reason: str
+
+
+def build_sn60_round_id() -> str:
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"sn60-round-{timestamp}-{secrets.token_hex(3)}"
+
+
+def write_sn60_round_summary(path: Path, result: Sn60RoundResult) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(asdict(result), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def run_sn60_round(
+    *,
+    king_artifact_path: str,
+    candidates: list[tuple[str, str]],
+    project_keys: list[str],
+    output_root: str | None = None,
+    replicas_per_project: int = DEFAULT_REPLICAS_PER_PROJECT,
+    sandbox_root: str | None = None,
+    benchmark_file: str | None = None,
+    sandbox_commit: str | None = None,
+    king_scoreboard_path: str | None = None,
+    screening_result: dict[str, object] | None = None,
+    execution_hook: Sn60ExecutionHook | None = None,
+    evaluation_hook: Sn60EvaluationHook | None = None,
+) -> Sn60RoundResult:
+    """Score the king once (from cache) against every candidate on the same
+    projects, then rank the candidates and pick the strict winner.
+
+    Each candidate is scored by one cached duel: the king is served from the
+    shared scoreboard, so across the whole round it runs at most once per project
+    regardless of how many candidates compete. The winner is the highest-ranked
+    candidate that strictly beats the king; ties keep the king (no winner).
+    """
+    if not candidates:
+        raise ValueError("SN60 round requires at least one candidate.")
+    seen_ids: set[str] = set()
+    for submission_id, _ in candidates:
+        if submission_id in seen_ids:
+            raise ValueError(f"Duplicate submission id in SN60 round: {submission_id}")
+        seen_ids.add(submission_id)
+
+    output_base = (
+        Path(output_root).expanduser().resolve() if output_root else Path("runs").resolve()
+    )
+    run_id = build_sn60_round_id()
+    round_root = output_base / run_id
+    round_root.mkdir(parents=True, exist_ok=False)
+
+    king_summary: Sn60VariantSummary | None = None
+    sandbox_source: Sn60SandboxSource | None = None
+    entries: list[Sn60RoundEntry] = []
+    for submission_id, candidate_artifact_path in candidates:
+        duel_summary = run_sn60_bitsec_duel(
+            king_artifact_path=king_artifact_path,
+            candidate_artifact_path=candidate_artifact_path,
+            project_keys=project_keys,
+            output_root=str(round_root),
+            replicas_per_project=replicas_per_project,
+            sandbox_root=sandbox_root,
+            benchmark_file=benchmark_file,
+            sandbox_commit=sandbox_commit,
+            execution_hook=execution_hook,
+            evaluation_hook=evaluation_hook,
+            king_scoreboard_path=king_scoreboard_path,
+        )
+        king_summary = duel_summary.king
+        sandbox_source = duel_summary.sandbox_source
+        decision = evaluate_sn60_promotion(
+            king=duel_summary.king,
+            candidate=duel_summary.candidate,
+            screening_result=screening_result,
+        )
+        entries.append(
+            Sn60RoundEntry(
+                submission_id=submission_id,
+                artifact_path=str(Path(candidate_artifact_path).expanduser().resolve()),
+                artifact_hash=duel_summary.candidate.artifact_hash,
+                beats_king=decision.promotion_ready,
+                duel_run_id=duel_summary.run_id,
+                candidate=duel_summary.candidate,
+            )
+        )
+
+    assert king_summary is not None and sandbox_source is not None
+    ranked = sorted(entries, key=lambda entry: sn60_variant_rank(entry.candidate), reverse=True)
+    winner = next((entry for entry in ranked if entry.beats_king), None)
+    result = Sn60RoundResult(
+        schema_version=DEFAULT_SN60_ROUND_SCHEMA_VERSION,
+        run_id=run_id,
+        created_at=datetime.now(UTC).isoformat(),
+        output_root=str(round_root),
+        project_keys=list(project_keys),
+        replicas_per_project=replicas_per_project,
+        sandbox_source=sandbox_source,
+        king=king_summary,
+        entries=ranked,
+        winner_submission_id=winner.submission_id if winner else None,
+        promotion_ready=winner is not None,
+        promotion_reason=(
+            f"{winner.submission_id} beat the current SN60 king"
+            if winner
+            else "no candidate beat the current SN60 king"
+        ),
+    )
+    write_sn60_round_summary(round_root / "round_summary.json", result)
+    return result
 
 
 def record_sn60_lane_provenance(
