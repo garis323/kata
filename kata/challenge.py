@@ -621,6 +621,11 @@ def run_sn60_round(
                     apply_running(king, king_acc, replica_result)
                 if king["done"] >= king["total"]:
                     king["state"] = "done"
+                    # The king is finished (or already cached) -> the candidate whose
+                    # duel is running is now up. Show it "scoring" immediately instead
+                    # of leaving it "queued" until its first problem completes.
+                    if candidate_entry["state"] == "queued":
+                        candidate_entry["state"] = "scoring"
             elif candidate_entry["done"] < candidate_entry["total"]:
                 candidate_entry["state"] = "scoring"
                 candidate_entry["done"] += 1
