@@ -104,9 +104,6 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
             },
         }
 
-    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": True, "report": VALID_SCREENING_REPORT}
-
     summary = run_sn60_challenge(
         king_artifact_path=str(king_root),
         candidate_artifact_path=str(candidate_root),
@@ -118,7 +115,6 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
         benchmark_file=str(benchmark_path),
         sandbox_commit="sandbox-commit-1",
         public_root=str(tmp_path / "public"),
-        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -321,9 +317,6 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
             },
         }
 
-    def screen(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": True, "report": VALID_SCREENING_REPORT}
-
     first = run_sn60_challenge(
         king_artifact_path=str(king_root),
         candidate_artifact_path=str(candidate_root),
@@ -335,7 +328,6 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-a",
         public_root=str(tmp_path / "public-a"),
-        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -350,7 +342,6 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-b",
         public_root=str(tmp_path / "public-b"),
-        screening_hook=screen,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )

@@ -33,7 +33,6 @@ from kata.lane_state import (
 from kata.live_progress import update_live_status
 from kata.provenance import short_hash
 from kata.screening import (
-    Sn60ScreeningHook,
     Sn60ScreeningResult,
     build_sn60_execution_note_result,
     build_sn60_screening_id,
@@ -138,7 +137,6 @@ def run_sn60_challenge(
     sandbox_commit: str | None = None,
     screening_result: dict[str, object] | None = None,
     public_root: str | None = None,
-    screening_hook: Sn60ScreeningHook | None = None,
     execution_hook: Sn60ExecutionHook | None = None,
     evaluation_hook: Sn60EvaluationHook | None = None,
 ) -> ChallengeSummary:
