@@ -34,6 +34,7 @@ import os
 import sys
 import threading
 from collections import OrderedDict
+from hmac import compare_digest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -91,6 +92,8 @@ HEALTHCHECK_MAX_TOKENS = 2000
 # Relay-local cost accounting: read the running total, or zero it before a PR.
 COST_PATH = "/costs"
 COST_RESET_PATH = "/costs/reset"
+ADMIN_TOKEN_ENV = "KATA_RELAY_ADMIN_TOKEN"
+ADMIN_TOKEN_HEADER = "x-kata-relay-admin-token"
 FORBIDDEN_SAMPLING_FIELDS = {
     "temperature",
     "top_p",
@@ -195,6 +198,16 @@ def resolve_timeout() -> float:
         if parsed > 0:
             return parsed
     return float(DEFAULT_TIMEOUT_SECONDS)
+
+
+def resolve_admin_token() -> str:
+    """Shared secret for relay operator endpoints.
+
+    The relay is reachable by untrusted agent containers, so endpoints that can
+    spend upstream tokens or mutate accounting must require an operator token.
+    When unset, those endpoints are disabled rather than left open.
+    """
+    return os.environ.get(ADMIN_TOKEN_ENV, "").strip()
 
 
 def _resolve_price(env_var: str, default: float) -> float:
@@ -413,10 +426,17 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
         if path == COST_RESET_PATH:
             self._read_body()  # drain any body so the connection stays consistent
+            if not self._admin_authorized():
+                self._send_json(403, {"status": "error", "detail": "admin token required"})
+                return
             COST_METER.reset()
             self._send_json(200, {"status": "reset"})
             return
         if path == UPSTREAM_CHECK_PATH:
+            if not self._admin_authorized():
+                self._read_body()
+                self._send_json(403, {"status": "error", "detail": "admin token required"})
+                return
             self._handle_upstream_check()
             return
         self._forward("POST")
@@ -559,6 +579,13 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _admin_authorized(self) -> bool:
+        expected = resolve_admin_token()
+        if not expected:
+            return False
+        supplied = self.headers.get(ADMIN_TOKEN_HEADER, "")
+        return compare_digest(supplied, expected)
 
     def log_message(self, *_args) -> None:
         # Silence per-request logging; inference bodies could be large/noisy.

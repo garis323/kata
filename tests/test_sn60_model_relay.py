@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from kata.sn60_model_relay import (
+    ADMIN_TOKEN_HEADER,
     AGENT_BUDGET,
     COST_METER,
     DEFAULT_PINNED_MODEL,
@@ -213,6 +214,7 @@ def relay_and_upstream(monkeypatch):
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "qwen/pinned-test")
     monkeypatch.setenv("KATA_RELAY_PRICE_INPUT_PER_M", "2")
     monkeypatch.setenv("KATA_RELAY_PRICE_OUTPUT_PER_M", "5")
+    monkeypatch.setenv("KATA_RELAY_ADMIN_TOKEN", "test-admin")
 
     relay = build_server("127.0.0.1", 0)
     threading.Thread(target=relay.serve_forever, daemon=True).start()
@@ -233,6 +235,10 @@ def _post(url: str, body: bytes, headers: dict[str, str] | None = None):
             response.read(),
             {k.lower(): v for k, v in response.headers.items()},
         )
+
+
+def _admin_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    return {ADMIN_TOKEN_HEADER: "test-admin", **(extra or {})}
 
 
 def test_inference_budget_refuses_agent_after_call_limit(relay_and_upstream, monkeypatch) -> None:
@@ -309,7 +315,11 @@ def test_inference_budget_survives_interleaved_problem_tokens(
 
 def test_upstream_check_reports_ok_when_reachable(relay_and_upstream) -> None:
     base, upstream = relay_and_upstream
-    status, body, _ = _post(base + "/healthz/upstream", b"", {"x-inference-api-key": "k"})
+    status, body, _ = _post(
+        base + "/healthz/upstream",
+        b"",
+        _admin_headers({"x-inference-api-key": "k"}),
+    )
     assert status == 200
     payload = json.loads(body)
     assert payload["ok"] is True
@@ -326,7 +336,11 @@ def test_upstream_check_reports_failure_status(relay_and_upstream) -> None:
     base, upstream = relay_and_upstream
     upstream.force_status = 403  # simulate OpenRouter "Key limit exceeded"
     try:
-        status, body, _ = _post(base + "/healthz/upstream", b"", {"x-inference-api-key": "k"})
+        status, body, _ = _post(
+            base + "/healthz/upstream",
+            b"",
+            _admin_headers({"x-inference-api-key": "k"}),
+        )
     finally:
         upstream.force_status = None
     assert status == 200
@@ -334,6 +348,14 @@ def test_upstream_check_reports_failure_status(relay_and_upstream) -> None:
     assert payload["ok"] is False
     assert payload["status"] == 403
     assert "limit" in str(payload.get("detail", "")).lower()
+
+
+def test_upstream_check_requires_admin_token(relay_and_upstream) -> None:
+    base, upstream = relay_and_upstream
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/healthz/upstream", b"", {"x-inference-api-key": "k"})
+    assert excinfo.value.code == 403
+    assert upstream.records == []
 
 
 def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) -> None:
@@ -512,12 +534,25 @@ def test_costs_reset_zeroes_the_running_total(relay_and_upstream) -> None:
           {"Content-Type": "application/json"})
     assert _get_json(base + "/costs")["input_tokens"] == 100
 
-    _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+    _post(base + "/costs/reset", b"", _admin_headers({"Content-Type": "application/json"}))
 
     after = _get_json(base + "/costs")
     assert after["requests"] == 0
     assert after["input_tokens"] == 0
     assert after["usd_total"] == 0.0
+
+
+def test_costs_reset_requires_admin_token(relay_and_upstream) -> None:
+    base, _ = relay_and_upstream
+    _post(base + "/inference", json.dumps({"messages": []}).encode(),
+          {"Content-Type": "application/json"})
+    assert _get_json(base + "/costs")["requests"] == 1
+
+    with pytest.raises(HTTPError) as excinfo:
+        _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+
+    assert excinfo.value.code == 403
+    assert _get_json(base + "/costs")["requests"] == 1
 
 
 def test_scoring_style_traffic_is_not_metered(relay_and_upstream) -> None:
