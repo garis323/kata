@@ -12,16 +12,17 @@ from kata.sn60_model_relay import (
     ADMIN_TOKEN_HEADER,
     AGENT_BUDGET,
     COST_METER,
-    DEFAULT_AKASH_PINNED_MODEL,
-    DEFAULT_AKASH_UPSTREAM,
+    DEFAULT_DIRECT_PINNED_MODEL,
+    DEFAULT_DIRECT_UPSTREAM,
     DEFAULT_PINNED_MODEL,
     DEFAULT_UPSTREAM,
     CostMeter,
     build_server,
     extract_usage,
     is_akash_api_key,
+    is_proxy_api_key,
     pin_model_in_body,
-    resolve_akash_upstream,
+    resolve_direct_provider,
     resolve_max_output_tokens,
     resolve_pinned_model,
     resolve_timeout,
@@ -116,13 +117,13 @@ def test_resolve_pinned_model_default(monkeypatch) -> None:
 
 def test_resolve_pinned_model_uses_akash_default_for_akash_keys(monkeypatch) -> None:
     monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
-    assert resolve_pinned_model("akml-test") == DEFAULT_AKASH_PINNED_MODEL
-    assert resolve_pinned_model("akml_test") == DEFAULT_AKASH_PINNED_MODEL
+    assert resolve_pinned_model("akml-test") == DEFAULT_DIRECT_PINNED_MODEL
+    assert resolve_pinned_model("akml_test") == DEFAULT_DIRECT_PINNED_MODEL
 
 
 def test_resolve_pinned_model_treats_standard_default_as_provider_default(monkeypatch) -> None:
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", DEFAULT_PINNED_MODEL)
-    assert resolve_pinned_model("akml-test") == DEFAULT_AKASH_PINNED_MODEL
+    assert resolve_pinned_model("akml-test") == DEFAULT_DIRECT_PINNED_MODEL
     assert resolve_pinned_model("sk-or-test") == DEFAULT_PINNED_MODEL
 
 
@@ -140,11 +141,56 @@ def test_is_akash_api_key_detects_known_prefixes() -> None:
     assert not is_akash_api_key("")
 
 
-def test_resolve_akash_upstream_default_and_override(monkeypatch) -> None:
+def test_is_proxy_api_key_detects_existing_proxy_router_prefixes() -> None:
+    assert is_proxy_api_key("sk-or-test")
+    assert is_proxy_api_key("cpk_test")
+    assert not is_proxy_api_key("akml-test")
+    assert not is_proxy_api_key("other-key")
+
+
+def test_resolve_direct_provider_uses_akash_defaults_and_overrides(monkeypatch) -> None:
     monkeypatch.delenv("KATA_RELAY_AKASH_UPSTREAM", raising=False)
-    assert resolve_akash_upstream() == DEFAULT_AKASH_UPSTREAM
+    monkeypatch.delenv("KATA_RELAY_AKASH_MODEL", raising=False)
+    provider = resolve_direct_provider("akml-test")
+    assert provider is not None
+    assert provider.upstream == DEFAULT_DIRECT_UPSTREAM
+    assert provider.model == DEFAULT_DIRECT_PINNED_MODEL
     monkeypatch.setenv("KATA_RELAY_AKASH_UPSTREAM", "http://akash.local/v1/chat/completions")
-    assert resolve_akash_upstream() == "http://akash.local/v1/chat/completions"
+    monkeypatch.setenv("KATA_RELAY_AKASH_MODEL", "Akash/Custom")
+    provider = resolve_direct_provider("akml-test")
+    assert provider is not None
+    assert provider.upstream == "http://akash.local/v1/chat/completions"
+    assert provider.model == "Akash/Custom"
+
+
+def test_resolve_direct_provider_supports_configured_provider(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_DIRECT_KEY_PREFIXES", "foo-,bar_")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_UPSTREAM", "https://provider.example/v1/chat/completions")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_MODEL", "Provider/Model")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_HEADER", "X-API-Key")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE", "Token {api_key}")
+
+    provider = resolve_direct_provider("foo-secret")
+
+    assert provider is not None
+    assert provider.upstream == "https://provider.example/v1/chat/completions"
+    assert provider.model == "Provider/Model"
+    assert provider.auth_header == "X-API-Key"
+    assert provider.auth_value_template == "Token {api_key}"
+    assert resolve_direct_provider("sk-or-test") is None
+    assert resolve_direct_provider("cpk_test") is None
+
+
+def test_resolve_direct_provider_can_allow_unknown_keys(monkeypatch) -> None:
+    monkeypatch.setenv("KATA_RELAY_DIRECT_ALLOW_UNKNOWN", "1")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_UPSTREAM", "https://provider.example/v1/chat/completions")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_MODEL", "Provider/Model")
+
+    provider = resolve_direct_provider("unknown-secret")
+
+    assert provider is not None
+    assert provider.model == "Provider/Model"
+    assert resolve_direct_provider("sk-or-test") is None
 
 
 def test_resolve_max_output_tokens_default(monkeypatch) -> None:
@@ -270,6 +316,28 @@ def akash_upstream(monkeypatch):
         "KATA_RELAY_AKASH_UPSTREAM",
         f"http://127.0.0.1:{upstream_port}/v1/chat/completions",
     )
+
+    try:
+        yield upstream
+    finally:
+        upstream.shutdown()
+
+
+@pytest.fixture
+def generic_direct_upstream(monkeypatch):
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
+    upstream.records = []  # type: ignore[attr-defined]
+    upstream.daemon_threads = True
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    upstream_port = upstream.server_address[1]
+    monkeypatch.setenv("KATA_RELAY_DIRECT_KEY_PREFIXES", "foo-")
+    monkeypatch.setenv(
+        "KATA_RELAY_DIRECT_UPSTREAM",
+        f"http://127.0.0.1:{upstream_port}/v1/chat/completions",
+    )
+    monkeypatch.setenv("KATA_RELAY_DIRECT_MODEL", "Provider/Model")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_HEADER", "X-API-Key")
+    monkeypatch.setenv("KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE", "Token {api_key}")
 
     try:
         yield upstream
@@ -431,7 +499,7 @@ def test_upstream_check_with_akash_key_probes_akash_directly(
     assert record["headers"].get("authorization") == "Bearer akml-test"
     assert "x-inference-api-key" not in record["headers"]
     outbound = json.loads(record["body"])
-    assert outbound["model"] == DEFAULT_AKASH_PINNED_MODEL
+    assert outbound["model"] == DEFAULT_DIRECT_PINNED_MODEL
     assert outbound["max_tokens"] == 2000
 
 
@@ -493,13 +561,47 @@ def test_akash_inference_uses_direct_endpoint_not_bitsec_proxy(
     assert record["headers"].get("authorization") == "Bearer akml-test"
     assert "x-inference-api-key" not in record["headers"]
     outbound = json.loads(record["body"])
-    assert outbound["model"] == DEFAULT_AKASH_PINNED_MODEL
+    assert outbound["model"] == DEFAULT_DIRECT_PINNED_MODEL
     assert outbound["max_tokens"] == 32000
     assert "temperature" not in outbound
     costs = _get_json(base + "/costs")
     assert costs["requests"] == 1
     assert costs["input_tokens"] == 100
     assert costs["output_tokens"] == 20
+
+
+def test_configured_direct_provider_uses_generic_direct_path(
+    relay_and_upstream, generic_direct_upstream, monkeypatch
+) -> None:
+    base, bitsec_upstream = relay_and_upstream
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+    body = json.dumps(
+        {
+            "model": "ignored/model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.9,
+            "max_tokens": 100,
+        }
+    ).encode()
+
+    status, _, _ = _post(
+        base + "/inference",
+        body,
+        {"Content-Type": "application/json", "x-inference-api-key": "foo-secret"},
+    )
+
+    assert status == 200
+    assert bitsec_upstream.records == []
+    assert len(generic_direct_upstream.records) == 1
+    record = generic_direct_upstream.records[0]
+    assert record["path"] == "/v1/chat/completions"
+    assert record["headers"].get("x-api-key") == "Token foo-secret"
+    assert "authorization" not in record["headers"]
+    assert "x-inference-api-key" not in record["headers"]
+    outbound = json.loads(record["body"])
+    assert outbound["model"] == "Provider/Model"
+    assert outbound["max_tokens"] == 32000
+    assert "temperature" not in outbound
 
 
 def test_inference_query_string_is_still_pinned(relay_and_upstream) -> None:

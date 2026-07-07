@@ -34,6 +34,7 @@ import os
 import sys
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from hmac import compare_digest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
@@ -41,8 +42,8 @@ from urllib.request import Request, urlopen
 
 DEFAULT_UPSTREAM = "http://bitsec_proxy:8000"
 DEFAULT_PINNED_MODEL = "qwen/qwen3.6-35b-a3b"
-DEFAULT_AKASH_PINNED_MODEL = "Qwen/Qwen3.6-35B-A3B"
-DEFAULT_AKASH_UPSTREAM = "https://api.akashml.com/v1/chat/completions"
+DEFAULT_DIRECT_PINNED_MODEL = "Qwen/Qwen3.6-35B-A3B"
+DEFAULT_DIRECT_UPSTREAM = "https://api.akashml.com/v1/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 900
 
 # Default qwen/qwen3.6-35b-a3b prices (USD per 1M tokens); override via env.
@@ -137,14 +138,98 @@ _SKIP_RESPONSE_HEADERS = {
     "content-length",
 }
 
-AKASH_KEY_PREFIXES = ("akml-", "akml_")
+PROXY_KEY_PREFIXES = ("sk-or-", "cpk_")
+DEFAULT_DIRECT_KEY_PREFIXES = ("akml-", "akml_")
+DEFAULT_DIRECT_AUTH_HEADER = "Authorization"
+DEFAULT_DIRECT_AUTH_VALUE_TEMPLATE = "Bearer {api_key}"
+
+
+class RelayConfigurationError(Exception):
+    """Operator-controlled relay configuration is incomplete or invalid."""
+
+
+@dataclass(frozen=True)
+class DirectProviderConfig:
+    upstream: str
+    model: str
+    auth_header: str = DEFAULT_DIRECT_AUTH_HEADER
+    auth_value_template: str = DEFAULT_DIRECT_AUTH_VALUE_TEMPLATE
 
 
 def is_akash_api_key(api_key: str | None) -> bool:
     """Return true when the inference key belongs to AkashML."""
+    return _api_key_matches_prefixes(api_key, DEFAULT_DIRECT_KEY_PREFIXES)
+
+
+def is_proxy_api_key(api_key: str | None) -> bool:
+    """Return true for providers already supported by the sandbox proxy."""
+    return _api_key_matches_prefixes(api_key, PROXY_KEY_PREFIXES)
+
+
+def _api_key_matches_prefixes(api_key: str | None, prefixes: tuple[str, ...] | list[str]) -> bool:
     if not api_key:
         return False
-    return api_key.strip().startswith(AKASH_KEY_PREFIXES)
+    value = api_key.strip()
+    return any(prefix == "*" or value.startswith(prefix) for prefix in prefixes)
+
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _direct_env_config() -> DirectProviderConfig:
+    upstream = os.environ.get("KATA_RELAY_DIRECT_UPSTREAM", "").strip()
+    model = os.environ.get("KATA_RELAY_DIRECT_MODEL", "").strip()
+    if not upstream or not model:
+        raise RelayConfigurationError(
+            "direct provider routing requires KATA_RELAY_DIRECT_UPSTREAM and "
+            "KATA_RELAY_DIRECT_MODEL"
+        )
+    return DirectProviderConfig(
+        upstream=upstream,
+        model=model,
+        auth_header=os.environ.get("KATA_RELAY_DIRECT_AUTH_HEADER", "").strip()
+        or DEFAULT_DIRECT_AUTH_HEADER,
+        auth_value_template=os.environ.get("KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE", "").strip()
+        or DEFAULT_DIRECT_AUTH_VALUE_TEMPLATE,
+    )
+
+
+def resolve_direct_provider(api_key: str | None) -> DirectProviderConfig | None:
+    """Resolve a direct OpenAI-compatible provider for keys the proxy cannot route.
+
+    OpenRouter and Chutes keep their existing sandbox-proxy route. AkashML is the
+    built-in direct provider. Future providers can be enabled without code changes:
+
+      KATA_RELAY_DIRECT_KEY_PREFIXES=abc-,xyz_
+      KATA_RELAY_DIRECT_UPSTREAM=https://provider.example/v1/chat/completions
+      KATA_RELAY_DIRECT_MODEL=Provider/Model
+
+    Use "*" as a prefix only when every non-proxy inference key should use the
+    configured direct provider.
+    """
+    if not api_key or is_proxy_api_key(api_key):
+        return None
+
+    custom_prefixes = _split_csv(os.environ.get("KATA_RELAY_DIRECT_KEY_PREFIXES"))
+    if custom_prefixes and _api_key_matches_prefixes(api_key, custom_prefixes):
+        return _direct_env_config()
+    if _env_truthy("KATA_RELAY_DIRECT_ALLOW_UNKNOWN"):
+        return _direct_env_config()
+    if is_akash_api_key(api_key):
+        return DirectProviderConfig(
+            upstream=os.environ.get("KATA_RELAY_AKASH_UPSTREAM", "").strip()
+            or DEFAULT_DIRECT_UPSTREAM,
+            model=os.environ.get("KATA_RELAY_AKASH_MODEL", "").strip()
+            or DEFAULT_DIRECT_PINNED_MODEL,
+        )
+    return None
 
 
 def resolve_upstream() -> str:
@@ -158,22 +243,22 @@ def resolve_upstream() -> str:
 def resolve_pinned_model(api_key: str | None = None) -> str:
     """The single model every inference request is forced onto."""
     value = os.environ.get("KATA_RELAY_PINNED_MODEL")
+    if value and value.strip() and value.strip() != DEFAULT_PINNED_MODEL:
+        return value.strip()
+    try:
+        direct_provider = resolve_direct_provider(api_key)
+    except RelayConfigurationError:
+        direct_provider = None
+    if direct_provider is not None:
+        return direct_provider.model
     if value and value.strip():
-        pinned_model = value.strip()
-        if is_akash_api_key(api_key) and pinned_model == DEFAULT_PINNED_MODEL:
-            return DEFAULT_AKASH_PINNED_MODEL
-        return pinned_model
-    if is_akash_api_key(api_key):
-        return DEFAULT_AKASH_PINNED_MODEL
+        return value.strip()
     return DEFAULT_PINNED_MODEL
 
 
 def resolve_akash_upstream() -> str:
     """OpenAI-compatible AkashML chat-completions endpoint."""
-    value = os.environ.get("KATA_RELAY_AKASH_UPSTREAM")
-    if value and value.strip():
-        return value.strip()
-    return DEFAULT_AKASH_UPSTREAM
+    return resolve_direct_provider("akml-test").upstream
 
 
 def resolve_max_output_tokens() -> int:
@@ -486,12 +571,16 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
                 "max_tokens": HEALTHCHECK_MAX_TOKENS,
             }
         ).encode()
-        request = self._build_upstream_request(
-            api_key=api_key,
-            body=probe_body,
-            upstream_path=INFERENCE_PATH,
-            method="POST",
-        )
+        try:
+            request = self._build_upstream_request(
+                api_key=api_key,
+                body=probe_body,
+                upstream_path=INFERENCE_PATH,
+                method="POST",
+            )
+        except RelayConfigurationError as error:
+            self._send_json(200, {"ok": False, "status": 0, "detail": str(error)})
+            return
         try:
             with urlopen(request, timeout=min(resolve_timeout(), 60.0)) as response:
                 self._send_json(
@@ -551,13 +640,17 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
             for key, value in self.headers.items()
             if key.lower() not in _SKIP_REQUEST_HEADERS
         }
-        request = self._build_upstream_request(
-            api_key=api_key,
-            body=body,
-            upstream_path=upstream_path,
-            method=method,
-            proxy_headers=headers,
-        )
+        try:
+            request = self._build_upstream_request(
+                api_key=api_key,
+                body=body,
+                upstream_path=upstream_path,
+                method=method,
+                proxy_headers=headers,
+            )
+        except RelayConfigurationError as error:
+            self._send_json(502, {"detail": str(error)})
+            return
         try:
             with urlopen(request, timeout=resolve_timeout()) as response:
                 response_body = response.read()
@@ -586,13 +679,17 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         method: str,
         proxy_headers: dict[str, str] | None = None,
     ) -> Request:
-        if is_akash_api_key(api_key):
+        direct_provider = resolve_direct_provider(api_key)
+        if direct_provider is not None:
             return Request(
-                resolve_akash_upstream(),
+                direct_provider.upstream,
                 data=body if body else None,
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
+                    direct_provider.auth_header: self._render_direct_auth_value(
+                        direct_provider.auth_value_template,
+                        api_key,
+                    ),
                 },
                 method=method,
             )
@@ -606,6 +703,18 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
             headers=headers,
             method=method,
         )
+
+    def _render_direct_auth_value(self, template: str, api_key: str) -> str:
+        if "{api_key}" not in template:
+            raise RelayConfigurationError(
+                "KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE must include {api_key}"
+            )
+        try:
+            return template.format(api_key=api_key)
+        except (KeyError, IndexError, ValueError) as error:
+            raise RelayConfigurationError(
+                "KATA_RELAY_DIRECT_AUTH_VALUE_TEMPLATE must use {api_key}"
+            ) from error
 
     def _relay_response(self, status: int, header_items, body: bytes) -> None:
         self.send_response(status)
