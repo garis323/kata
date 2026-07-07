@@ -41,6 +41,8 @@ from urllib.request import Request, urlopen
 
 DEFAULT_UPSTREAM = "http://bitsec_proxy:8000"
 DEFAULT_PINNED_MODEL = "qwen/qwen3.6-35b-a3b"
+DEFAULT_AKASH_PINNED_MODEL = "Qwen/Qwen3.6-35B-A3B"
+DEFAULT_AKASH_UPSTREAM = "https://api.akashml.com/v1/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 900
 
 # Default qwen/qwen3.6-35b-a3b prices (USD per 1M tokens); override via env.
@@ -135,6 +137,15 @@ _SKIP_RESPONSE_HEADERS = {
     "content-length",
 }
 
+AKASH_KEY_PREFIXES = ("akml-", "akml_")
+
+
+def is_akash_api_key(api_key: str | None) -> bool:
+    """Return true when the inference key belongs to AkashML."""
+    if not api_key:
+        return False
+    return api_key.strip().startswith(AKASH_KEY_PREFIXES)
+
 
 def resolve_upstream() -> str:
     """Base URL of the real inference proxy the relay forwards to."""
@@ -144,12 +155,22 @@ def resolve_upstream() -> str:
     return DEFAULT_UPSTREAM
 
 
-def resolve_pinned_model() -> str:
+def resolve_pinned_model(api_key: str | None = None) -> str:
     """The single model every inference request is forced onto."""
     value = os.environ.get("KATA_RELAY_PINNED_MODEL")
     if value and value.strip():
         return value.strip()
+    if is_akash_api_key(api_key):
+        return DEFAULT_AKASH_PINNED_MODEL
     return DEFAULT_PINNED_MODEL
+
+
+def resolve_akash_upstream() -> str:
+    """OpenAI-compatible AkashML chat-completions endpoint."""
+    value = os.environ.get("KATA_RELAY_AKASH_UPSTREAM")
+    if value and value.strip():
+        return value.strip()
+    return DEFAULT_AKASH_UPSTREAM
 
 
 def resolve_max_output_tokens() -> int:
@@ -453,21 +474,19 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         # the proxy rejects it as unusable (a false failure). Give it enough room to
         # finish a trivial reply; a healthy provider returns 200 in ~2s, an exhausted
         # key still fails fast with 403.
+        api_key = self._inference_api_key()
+        pinned_model = resolve_pinned_model(api_key)
         probe_body = json.dumps(
             {
-                "model": resolve_pinned_model(),
+                "model": pinned_model,
                 "messages": [{"role": "user", "content": "Reply with the single word OK."}],
                 "max_tokens": HEALTHCHECK_MAX_TOKENS,
             }
         ).encode()
-        headers = {"Content-Type": "application/json"}
-        api_key = self.headers.get("x-inference-api-key")
-        if api_key:
-            headers["x-inference-api-key"] = api_key
-        request = Request(
-            resolve_upstream() + INFERENCE_PATH,
-            data=probe_body,
-            headers=headers,
+        request = self._build_upstream_request(
+            api_key=api_key,
+            body=probe_body,
+            upstream_path=INFERENCE_PATH,
             method="POST",
         )
         try:
@@ -520,19 +539,21 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
             self._send_json(429, {"status": "error", "detail": f"inference budget: {reason}"})
             return
 
-        body = pin_model_in_body(body, resolve_pinned_model(), resolve_max_output_tokens())
+        api_key = self._inference_api_key()
+        pinned_model = resolve_pinned_model(api_key)
+        body = pin_model_in_body(body, pinned_model, resolve_max_output_tokens())
 
         headers = {
             key: value
             for key, value in self.headers.items()
             if key.lower() not in _SKIP_REQUEST_HEADERS
         }
-        url = resolve_upstream() + upstream_path
-        request = Request(
-            url,
-            data=body if body else None,
-            headers=headers,
+        request = self._build_upstream_request(
+            api_key=api_key,
+            body=body,
+            upstream_path=upstream_path,
             method=method,
+            proxy_headers=headers,
         )
         try:
             with urlopen(request, timeout=resolve_timeout()) as response:
@@ -553,6 +574,36 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
         if input_tokens or output_tokens:
             COST_METER.add(input_tokens, output_tokens, cached_tokens)
 
+    def _build_upstream_request(
+        self,
+        *,
+        api_key: str,
+        body: bytes,
+        upstream_path: str,
+        method: str,
+        proxy_headers: dict[str, str] | None = None,
+    ) -> Request:
+        if is_akash_api_key(api_key):
+            return Request(
+                resolve_akash_upstream(),
+                data=body if body else None,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method=method,
+            )
+
+        headers = proxy_headers or {"Content-Type": "application/json"}
+        if api_key:
+            headers["x-inference-api-key"] = api_key
+        return Request(
+            resolve_upstream() + upstream_path,
+            data=body if body else None,
+            headers=headers,
+            method=method,
+        )
+
     def _relay_response(self, status: int, header_items, body: bytes) -> None:
         self.send_response(status)
         for key, value in header_items:
@@ -571,6 +622,9 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
 
     def _path_without_query(self) -> str:
         return self.path.split("?", 1)[0]
+
+    def _inference_api_key(self) -> str:
+        return self.headers.get("x-inference-api-key", "").strip()
 
     def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")

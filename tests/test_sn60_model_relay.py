@@ -12,12 +12,16 @@ from kata.sn60_model_relay import (
     ADMIN_TOKEN_HEADER,
     AGENT_BUDGET,
     COST_METER,
+    DEFAULT_AKASH_PINNED_MODEL,
+    DEFAULT_AKASH_UPSTREAM,
     DEFAULT_PINNED_MODEL,
     DEFAULT_UPSTREAM,
     CostMeter,
     build_server,
     extract_usage,
+    is_akash_api_key,
     pin_model_in_body,
+    resolve_akash_upstream,
     resolve_max_output_tokens,
     resolve_pinned_model,
     resolve_timeout,
@@ -110,9 +114,31 @@ def test_resolve_pinned_model_default(monkeypatch) -> None:
     assert resolve_pinned_model() == DEFAULT_PINNED_MODEL
 
 
+def test_resolve_pinned_model_uses_akash_default_for_akash_keys(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+    assert resolve_pinned_model("akml-test") == DEFAULT_AKASH_PINNED_MODEL
+    assert resolve_pinned_model("akml_test") == DEFAULT_AKASH_PINNED_MODEL
+
+
 def test_resolve_pinned_model_override(monkeypatch) -> None:
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "vendor/model")
     assert resolve_pinned_model() == "vendor/model"
+    assert resolve_pinned_model("akml-test") == "vendor/model"
+
+
+def test_is_akash_api_key_detects_known_prefixes() -> None:
+    assert is_akash_api_key("akml-test")
+    assert is_akash_api_key("akml_test")
+    assert not is_akash_api_key("sk-or-test")
+    assert not is_akash_api_key("cpk_test")
+    assert not is_akash_api_key("")
+
+
+def test_resolve_akash_upstream_default_and_override(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_AKASH_UPSTREAM", raising=False)
+    assert resolve_akash_upstream() == DEFAULT_AKASH_UPSTREAM
+    monkeypatch.setenv("KATA_RELAY_AKASH_UPSTREAM", "http://akash.local/v1/chat/completions")
+    assert resolve_akash_upstream() == "http://akash.local/v1/chat/completions"
 
 
 def test_resolve_max_output_tokens_default(monkeypatch) -> None:
@@ -224,6 +250,24 @@ def relay_and_upstream(monkeypatch):
         yield relay_base, upstream
     finally:
         relay.shutdown()
+        upstream.shutdown()
+
+
+@pytest.fixture
+def akash_upstream(monkeypatch):
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
+    upstream.records = []  # type: ignore[attr-defined]
+    upstream.daemon_threads = True
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    upstream_port = upstream.server_address[1]
+    monkeypatch.setenv(
+        "KATA_RELAY_AKASH_UPSTREAM",
+        f"http://127.0.0.1:{upstream_port}/v1/chat/completions",
+    )
+
+    try:
+        yield upstream
+    finally:
         upstream.shutdown()
 
 
@@ -358,6 +402,33 @@ def test_upstream_check_requires_admin_token(relay_and_upstream) -> None:
     assert upstream.records == []
 
 
+def test_upstream_check_with_akash_key_probes_akash_directly(
+    relay_and_upstream, akash_upstream, monkeypatch
+) -> None:
+    base, bitsec_upstream = relay_and_upstream
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+
+    status, body, _ = _post(
+        base + "/healthz/upstream",
+        b"",
+        _admin_headers({"x-inference-api-key": "akml-test"}),
+    )
+
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["ok"] is True
+    assert payload["status"] == 200
+    assert bitsec_upstream.records == []
+    assert len(akash_upstream.records) == 1
+    record = akash_upstream.records[0]
+    assert record["path"] == "/v1/chat/completions"
+    assert record["headers"].get("authorization") == "Bearer akml-test"
+    assert "x-inference-api-key" not in record["headers"]
+    outbound = json.loads(record["body"])
+    assert outbound["model"] == DEFAULT_AKASH_PINNED_MODEL
+    assert outbound["max_tokens"] == 2000
+
+
 def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) -> None:
     base, upstream = relay_and_upstream
     body = json.dumps(
@@ -386,6 +457,43 @@ def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) 
     assert "seed" not in outbound
     # The agent's inference key rides through untouched to the real proxy.
     assert record["headers"].get("x-inference-api-key") == "sk-or-abc"
+
+
+def test_akash_inference_uses_direct_endpoint_not_bitsec_proxy(
+    relay_and_upstream, akash_upstream, monkeypatch
+) -> None:
+    base, bitsec_upstream = relay_and_upstream
+    monkeypatch.delenv("KATA_RELAY_PINNED_MODEL", raising=False)
+    body = json.dumps(
+        {
+            "model": "openrouter/other",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.9,
+            "max_tokens": 100,
+        }
+    ).encode()
+
+    status, _, _ = _post(
+        base + "/inference",
+        body,
+        {"Content-Type": "application/json", "x-inference-api-key": "akml-test"},
+    )
+
+    assert status == 200
+    assert bitsec_upstream.records == []
+    assert len(akash_upstream.records) == 1
+    record = akash_upstream.records[0]
+    assert record["path"] == "/v1/chat/completions"
+    assert record["headers"].get("authorization") == "Bearer akml-test"
+    assert "x-inference-api-key" not in record["headers"]
+    outbound = json.loads(record["body"])
+    assert outbound["model"] == DEFAULT_AKASH_PINNED_MODEL
+    assert outbound["max_tokens"] == 32000
+    assert "temperature" not in outbound
+    costs = _get_json(base + "/costs")
+    assert costs["requests"] == 1
+    assert costs["input_tokens"] == 100
+    assert costs["output_tokens"] == 20
 
 
 def test_inference_query_string_is_still_pinned(relay_and_upstream) -> None:
