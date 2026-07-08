@@ -10,6 +10,7 @@ from kata.screening import (
     run_sn60_screening,
     validate_sn60_static_screening,
 )
+from kata.screening_system import screen_submission
 
 SCREENING_DESCRIPTION = (
     "A privileged state-changing function can be called by any account, "
@@ -65,6 +66,29 @@ def test_validate_sn60_static_screening_rejects_helper_files_and_leak_tokens(
 
     assert any("do not support helper files in V1" in reason for reason in reasons)
     assert any("benchmark-answer leakage token" in reason for reason in reasons)
+
+
+def test_screen_submission_wraps_current_static_screening(tmp_path: Path) -> None:
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
+        "KNOWN = 'curated-highs-only'\n"
+        + VALID_AGENT_SOURCE,
+        helper_source="VALUE = 1\n",
+    )
+
+    decision = screen_submission(
+        submission_root=bundle_root,
+        changed_paths=[],
+        repo_root=tmp_path,
+        public_root=None,
+        mode="miner",
+    )
+
+    assert decision.status == "reject"
+    assert not decision.passed
+    assert decision.rejection_messages() == validate_sn60_static_screening(bundle_root)
+    assert all(finding.rule_id == "sn60.static" for finding in decision.reject_reasons)
 
 
 def test_validate_sn60_static_screening_rejects_async_agent_main(

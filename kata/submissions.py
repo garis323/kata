@@ -56,7 +56,7 @@ from kata.public_artifacts import (
     resolve_kata_root,
     resolve_public_king_root,
 )
-from kata.screening import validate_sn60_static_screening
+from kata.screening_system import screen_submission
 from kata.util import dedupe
 
 SUBMISSIONS_DIRNAME = "submissions"
@@ -1132,7 +1132,14 @@ def validate_submission_candidate(
 
     bundle_files = load_bundle_files(submission_root)
     if metadata.mode == "miner":
-        reasons.extend(validate_sn60_static_screening(submission_root))
+        screening_decision = screen_submission(
+            submission_root=submission_root,
+            changed_paths=[],
+            repo_root=submission_root,
+            public_root=Path(public_root).expanduser().resolve() if public_root else None,
+            mode=metadata.mode,
+        )
+        reasons.extend(screening_decision.rejection_messages())
 
     reasons.extend(validate_bundle_python_sources(bundle_files))
     reasons.extend(validate_bundle_static_policy(bundle_files))
