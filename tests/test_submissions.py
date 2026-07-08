@@ -887,7 +887,10 @@ def test_evaluate_submission_samples_benchmark_project_keys_from_env(
     monkeypatch.delenv("KATA_SN60_PROJECT_KEYS", raising=False)
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "2")
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SECRET", "validator-secret")
-    monkeypatch.setattr("kata.submissions.secrets.token_hex", lambda _size: "nonce-1")
+    monkeypatch.setattr(
+        "kata.validator_system.project_selection.secrets.token_hex",
+        lambda _size: "nonce-1",
+    )
     monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
 
     summary = evaluate_submission(

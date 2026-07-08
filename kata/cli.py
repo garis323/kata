@@ -4,12 +4,9 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from kata.challenge import (
+from kata.evaluators.sn60_bitsec import (
     DEFAULT_REPLICAS_PER_PROJECT,
     hash_bundle_root,
-    load_challenge_summary,
-    render_challenge_summary,
-    run_sn60_round,
 )
 from kata.lane_state import (
     LANE_METADATA_SCHEMA_VERSION,
@@ -36,6 +33,11 @@ from kata.submissions import (
     resolve_sn60_project_keys,
     validate_submission,
     verify_submission_result,
+)
+from kata.validator_system import (
+    load_challenge_summary,
+    render_challenge_summary,
+    run_sn60_round,
 )
 
 
