@@ -28,6 +28,28 @@ def test_llm_review_invokes_codex_and_adds_review_finding(
 ) -> None:
     monkeypatch.setenv("KATA_SCREENING_LLM_REVIEW", "1")
     monkeypatch.setenv("KATA_SCREENING_LLM_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+    benchmark = tmp_path / "benchmark.json"
+    benchmark.write_text(
+        json.dumps(
+            [
+                {
+                    "project_id": "benchmark_project_alpha",
+                    "name": "Benchmark Alpha",
+                    "platform": "test",
+                    "vulnerabilities": [
+                        {
+                            "finding_id": "finding-alpha",
+                            "severity": "high",
+                            "title": "Alpha replay title",
+                            "description": "Alpha hidden answer text.",
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KATA_SCREENING_LLM_BENCHMARK_FILE", str(benchmark))
     calls: list[tuple[list[str], str, int, Path]] = []
 
     def fake_runner(
@@ -76,9 +98,14 @@ def test_llm_review_invokes_codex_and_adds_review_finding(
     assert "Confidence rubric:" in prompt
     assert "0.70-0.89 = high confidence" in prompt
     assert "not how good the miner is" in prompt
+    assert "Internal production benchmark reference" in prompt
+    assert "benchmark_project_alpha" in prompt
+    assert "Alpha replay title" in prompt
     assert findings[0].rule_id == "llm_review.suspicious"
     assert findings[0].severity == "review"
     assert notes[0].rule_id == "llm_review.result"
+    assert any(note.rule_id == "llm_review.suspicious.evidence" for note in notes)
+    assert any(note.line == 4 for note in notes)
     artifacts = list((tmp_path / "artifacts").glob("llm-review-*.json"))
     assert artifacts
     assert "artifact saved for maintainer audit" in notes[0].reason

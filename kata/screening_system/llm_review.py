@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -17,10 +18,16 @@ LLM_MODEL_ENV = "KATA_SCREENING_LLM_MODEL"
 LLM_CODEX_BIN_ENV = "KATA_SCREENING_LLM_CODEX_BIN"
 LLM_TIMEOUT_ENV = "KATA_SCREENING_LLM_TIMEOUT_SECONDS"
 LLM_ARTIFACT_DIR_ENV = "KATA_SCREENING_LLM_ARTIFACT_DIR"
+LLM_BENCHMARK_FILE_ENV = "KATA_SCREENING_LLM_BENCHMARK_FILE"
+SN60_BENCHMARK_FILE_ENV = "KATA_SN60_BENCHMARK_FILE"
 DEFAULT_LLM_MODEL = "gpt-5.4"
 DEFAULT_LLM_TIMEOUT_SECONDS = 180
+DEFAULT_LLM_BENCHMARK_FILE = Path("/srv/kata-benchmark") / "curated-highs-only-2025-08-08.json"
 MAX_LLM_SOURCE_CHARS_PER_FILE = 24_000
 MAX_LLM_TOTAL_SOURCE_CHARS = 48_000
+MAX_LLM_BENCHMARK_CONTEXT_CHARS = 22_000
+MAX_LLM_BENCHMARK_PROJECTS = 40
+MAX_LLM_BENCHMARK_VULNS_PER_PROJECT = 12
 
 LlmVerdict = Literal["pass", "suspicious", "reject", "error"]
 LlmRunner = Callable[[list[str], str, int, Path], "LlmCommandResult"]
@@ -88,6 +95,7 @@ def review_suspicious_submission_with_llm(
     note = llm_review_note(result)
     if note is not None:
         notes.append(note)
+    notes.extend(llm_review_evidence_notes(result))
     if result.verdict in {"suspicious", "reject"}:
         findings.append(llm_review_finding(result))
     return findings, notes
@@ -202,6 +210,18 @@ def build_llm_review_prompt(
         for finding in decision.review_reasons
     ]
     sources = render_source_packet(bundle_files)
+    benchmark_context = render_llm_benchmark_context()
+    benchmark_section = ""
+    if benchmark_context:
+        benchmark_section = (
+            "Internal production benchmark reference for reviewer use only:\n"
+            f"{benchmark_context}\n\n"
+            "Use this benchmark reference to recognize exact project IDs, finding "
+            "IDs, report titles, copied answer text, or narrow project-family "
+            "fingerprints in the submitted source. Do not quote hidden benchmark "
+            "answer text back in `summary`; explain the issue using submitted-code "
+            "line evidence and plain behavior instead.\n\n"
+        )
     return (
         "Review this Kata SN60 miner submission for screening integrity.\n"
         "This optional LLM review only runs after deterministic screening has "
@@ -232,7 +252,12 @@ def build_llm_review_prompt(
         "- Use `reject` only when the source clearly supports benchmark replay, "
         "hardcoding, copy-cat behavior, or secret/answer leakage.\n"
         "- Include short line-specific evidence when possible.\n"
-        "- Keep `summary` plain and concise, one or two human-readable sentences.\n"
+        "- Keep `summary` plain, honest, and easy for a contributor to understand. "
+        "One or two sentences is enough. No lawyer fog, no robot lecture.\n"
+        "- Evidence should point at the submitted source lines and explain what "
+        "the code does. If benchmark matching is the issue, say what kind of "
+        "thing matched (project ID, finding ID, title, answer text, or fingerprint) "
+        "without dumping the hidden benchmark answer back to the contributor.\n"
         "- Return JSON only; no markdown and no extra commentary.\n\n"
         "Confidence rubric:\n"
         "- 0.00-0.39 = low confidence: weak or ambiguous evidence; do not rely on "
@@ -253,9 +278,65 @@ def build_llm_review_prompt(
         "}\n\n"
         "Deterministic screening evidence:\n"
         f"{json.dumps(evidence, indent=2)}\n\n"
+        f"{benchmark_section}"
         "Submitted source files:\n"
         f"{sources}\n"
     )
+
+
+def render_llm_benchmark_context() -> str:
+    path = resolve_llm_benchmark_file()
+    if path is None:
+        return ""
+    try:
+        raw = path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, list):
+        return ""
+    lines = [
+        f"benchmark_file={path}",
+        f"benchmark_sha256={sha256(raw.encode('utf-8')).hexdigest()}",
+        f"project_count={len(payload)}",
+    ]
+    for project in payload[:MAX_LLM_BENCHMARK_PROJECTS]:
+        if not isinstance(project, dict):
+            continue
+        project_id = str(project.get("project_id") or "").strip()
+        name = str(project.get("name") or "").strip()
+        platform = str(project.get("platform") or "").strip()
+        lines.append(f"- project_id={project_id}; name={name}; platform={platform}")
+        vulnerabilities = project.get("vulnerabilities")
+        if not isinstance(vulnerabilities, list):
+            continue
+        for vuln in vulnerabilities[:MAX_LLM_BENCHMARK_VULNS_PER_PROJECT]:
+            if not isinstance(vuln, dict):
+                continue
+            finding_id = str(vuln.get("finding_id") or "").strip()
+            severity = str(vuln.get("severity") or "").strip()
+            title = " ".join(str(vuln.get("title") or "").split())
+            description = " ".join(str(vuln.get("description") or "").split())
+            description = description[:240]
+            lines.append(
+                "  - "
+                f"finding_id={finding_id}; severity={severity}; "
+                f"title={title}; description_snippet={description}"
+            )
+    rendered = "\n".join(lines)
+    if len(rendered) > MAX_LLM_BENCHMARK_CONTEXT_CHARS:
+        rendered = rendered[:MAX_LLM_BENCHMARK_CONTEXT_CHARS] + "\n# [truncated]\n"
+    return rendered
+
+
+def resolve_llm_benchmark_file() -> Path | None:
+    for env_name in (LLM_BENCHMARK_FILE_ENV, SN60_BENCHMARK_FILE_ENV):
+        raw = os.environ.get(env_name, "").strip()
+        if raw:
+            return Path(raw).expanduser().resolve()
+    if DEFAULT_LLM_BENCHMARK_FILE.exists():
+        return DEFAULT_LLM_BENCHMARK_FILE.resolve()
+    return None
 
 
 def render_source_packet(bundle_files: dict[str, str]) -> str:
@@ -352,6 +433,36 @@ def llm_review_note(result: LlmReviewResult) -> ScreeningFinding | None:
         reason=f"{'; '.join(parts)}: {summary}",
         evidence=f"model={result.model}",
     )
+
+
+def llm_review_evidence_notes(result: LlmReviewResult) -> list[ScreeningFinding]:
+    notes: list[ScreeningFinding] = []
+    if result.verdict not in {"suspicious", "reject"}:
+        return notes
+    for item in result.evidence[:3]:
+        reason = sanitize_public_llm_evidence(item.reason)
+        if not reason:
+            continue
+        notes.append(
+            ScreeningFinding(
+                rule_id=f"llm_review.{result.verdict}.evidence",
+                severity="note",
+                path="agent.py" if item.line else None,
+                line=item.line,
+                reason=f"LLM review source evidence: {reason}",
+                evidence=f"verdict={result.verdict}; confidence={result.confidence:.2f}",
+            )
+        )
+    return notes
+
+
+def sanitize_public_llm_evidence(reason: str) -> str:
+    text = " ".join(reason.strip().split())
+    if not text:
+        return ""
+    text = text.replace(";", ",")
+    text = re.sub(r"`([^`]{120,})`", "`[long snippet omitted]`", text)
+    return text[:260]
 
 
 def record_llm_review_artifact(
