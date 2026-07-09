@@ -9,6 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import (
+    DEFAULT_EVAL_MAX_VULNS,
     DEFAULT_REPLICAS_PER_PROJECT,
     Sn60DuelSummary,
     Sn60EvaluationHook,
@@ -18,9 +19,14 @@ from kata.evaluators.sn60_bitsec import (
     Sn60SandboxSource,
     Sn60VariantSummary,
     bitsec_project_image,
+    build_default_evaluation_hook,
+    build_default_execution_hook,
     hash_bundle_root,
     resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
+    score_variant_on_projects,
+    summarize_variant,
+    validate_sn60_project_keys,
 )
 from kata.provenance import short_hash
 from kata.state_system.lane import (
@@ -61,6 +67,8 @@ class ChallengePoolSummary:
     variant_scores: dict[str, float]
     candidate_beats_king: bool
     candidate_score_delta: float
+    competition_mode: str = "king_duel"
+    king_skipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -336,6 +344,75 @@ def sn60_duel_to_pool_summary(
     )
 
 
+def sn60_candidate_only_to_challenge_summary(
+    *,
+    candidate: Sn60VariantSummary,
+    candidate_summary_path: Path,
+    king_artifact_path: str,
+    king_artifact_hash: str,
+    sandbox_source: Sn60SandboxSource,
+    project_keys: list[str],
+    replicas_per_project: int,
+    lane_id: str,
+    reason: str,
+) -> ChallengeSummary:
+    candidate_score = round(candidate.aggregated_score * 100, 2)
+    fingerprint_payload = {
+        "competition_mode": "candidate_only",
+        "king_artifact_hash": king_artifact_hash,
+        "candidate_artifact_hash": candidate.artifact_hash,
+        "project_keys": list(project_keys),
+        "replicas_per_project": replicas_per_project,
+        "sandbox_commit": sandbox_source.sandbox_commit,
+        "benchmark_sha256": sandbox_source.benchmark_sha256,
+        "scorer_version": sandbox_source.scorer_version,
+    }
+    fingerprint = sha256(
+        json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return ChallengeSummary(
+        schema_version=CHALLENGE_SUMMARY_SCHEMA_VERSION,
+        run_id=f"candidate-only-{short_hash(candidate.artifact_hash)}",
+        manifest_path=str(candidate_summary_path),
+        mode=SN60_MINER_MODE,
+        evaluator_version=(
+            f"{sandbox_source.scorer_version}@{short_hash(sandbox_source.sandbox_commit)}"
+        ),
+        validator_model=SN60_VALIDATOR_MODEL,
+        king_artifact=king_artifact_path,
+        candidate_artifact=candidate.artifact_path,
+        king_artifact_hash=king_artifact_hash,
+        candidate_artifact_hash=candidate.artifact_hash,
+        primary_pool_fingerprint=fingerprint,
+        created_at=datetime.now(UTC).isoformat(),
+        primary=ChallengePoolSummary(
+            project_keys=list(project_keys),
+            run_summary_path=str(candidate_summary_path),
+            total_task_weight=float(len(project_keys)),
+            variant_successes={
+                "king": 0,
+                "candidate": candidate.codebase_pass_count,
+            },
+            variant_invalid_runs={
+                "king": 0,
+                "candidate": candidate.invalid_runs,
+            },
+            variant_scores={
+                "king": 0.0,
+                "candidate": candidate_score,
+            },
+            candidate_beats_king=False,
+            candidate_score_delta=0.0,
+            competition_mode="candidate_only",
+            king_skipped=True,
+        ),
+        promotion_ready=True,
+        promotion_reason=(
+            f"{lane_id}: candidate-only recovery mode selected this candidate; {reason}"
+        ),
+    )
+
+
 def build_sn60_screening_failure_summary(
     *,
     king_artifact_path: str,
@@ -432,9 +509,10 @@ class Sn60RoundEntry:
     submission_id: str
     artifact_path: str
     artifact_hash: str
-    beats_king: bool
+    beats_king: bool | None
     duel_run_id: str
     candidate: Sn60VariantSummary
+    selected_winner: bool = False
 
 
 @dataclass(frozen=True)
@@ -446,12 +524,14 @@ class Sn60RoundResult:
     project_keys: list[str]
     replicas_per_project: int
     sandbox_source: Sn60SandboxSource
-    king: Sn60VariantSummary
+    king: Sn60VariantSummary | None
     entries: list[Sn60RoundEntry]
     winner_submission_id: str | None
     promotion_ready: bool
     promotion_reason: str
     winner_challenge_summary_path: str | None = None
+    competition_mode: str = "king_duel"
+    king_skipped_reason: str | None = None
 
 
 def build_sn60_round_id() -> str:
@@ -511,6 +591,8 @@ def run_sn60_round(
     execution_hook: Sn60ExecutionHook | None = None,
     evaluation_hook: Sn60EvaluationHook | None = None,
     progress_path: str | None = None,
+    candidate_only: bool = False,
+    king_skipped_reason: str | None = None,
 ) -> Sn60RoundResult:
     """Score the king once (from cache) against every candidate on the same
     projects, then rank the candidates and pick the strict winner.
@@ -527,6 +609,21 @@ def run_sn60_round(
         if submission_id in seen_ids:
             raise ValueError(f"Duplicate submission id in SN60 round: {submission_id}")
         seen_ids.add(submission_id)
+    if candidate_only:
+        return run_sn60_candidate_only_round(
+            king_artifact_path=king_artifact_path,
+            candidates=candidates,
+            project_keys=project_keys,
+            output_root=output_root,
+            replicas_per_project=replicas_per_project,
+            sandbox_root=sandbox_root,
+            benchmark_file=benchmark_file,
+            sandbox_commit=sandbox_commit,
+            execution_hook=execution_hook,
+            evaluation_hook=evaluation_hook,
+            progress_path=progress_path,
+            king_skipped_reason=king_skipped_reason,
+        )
 
     output_base = (
         Path(output_root).expanduser().resolve() if output_root else Path("runs").resolve()
@@ -679,6 +776,7 @@ def run_sn60_round(
                 beats_king=decision.promotion_ready,
                 duel_run_id=duel_summary.run_id,
                 candidate=duel_summary.candidate,
+                selected_winner=False,
             )
         )
 
@@ -699,6 +797,18 @@ def run_sn60_round(
         winner_summary_path = Path(winner_duel.output_root) / "challenge_summary.json"
         write_challenge_summary(winner_summary_path, winner_summary)
         winner_challenge_summary_path = str(winner_summary_path)
+    final_entries = [
+        Sn60RoundEntry(
+            submission_id=entry.submission_id,
+            artifact_path=entry.artifact_path,
+            artifact_hash=entry.artifact_hash,
+            beats_king=entry.beats_king,
+            duel_run_id=entry.duel_run_id,
+            candidate=entry.candidate,
+            selected_winner=winner is not None and entry.submission_id == winner.submission_id,
+        )
+        for entry in ranked
+    ]
     result = Sn60RoundResult(
         schema_version=DEFAULT_SN60_ROUND_SCHEMA_VERSION,
         run_id=run_id,
@@ -708,7 +818,7 @@ def run_sn60_round(
         replicas_per_project=replicas_per_project,
         sandbox_source=sandbox_source,
         king=king_summary,
-        entries=ranked,
+        entries=final_entries,
         winner_submission_id=winner.submission_id if winner else None,
         promotion_ready=winner is not None,
         promotion_reason=(
@@ -717,6 +827,253 @@ def run_sn60_round(
             else "no candidate beat the current SN60 king"
         ),
         winner_challenge_summary_path=winner_challenge_summary_path,
+    )
+    progress["state"] = "completed"
+    progress["winner_submission_id"] = result.winner_submission_id
+    emit_progress()
+    write_sn60_round_summary(round_root / "round_summary.json", result)
+    return result
+
+
+def run_sn60_candidate_only_round(
+    *,
+    king_artifact_path: str,
+    candidates: list[tuple[str, str]],
+    project_keys: list[str],
+    output_root: str | None = None,
+    replicas_per_project: int = DEFAULT_REPLICAS_PER_PROJECT,
+    sandbox_root: str | None = None,
+    benchmark_file: str | None = None,
+    sandbox_commit: str | None = None,
+    execution_hook: Sn60ExecutionHook | None = None,
+    evaluation_hook: Sn60EvaluationHook | None = None,
+    progress_path: str | None = None,
+    king_skipped_reason: str | None = None,
+) -> Sn60RoundResult:
+    """Score only candidates and promote the top-ranked entrant.
+
+    This is an explicit recovery mode for replacing a suspected bad king. The
+    current king is not executed; its artifact hash is recorded only so the
+    trusted promotion path can verify it is replacing the same king snapshot the
+    maintainer intentionally skipped.
+    """
+    if not project_keys:
+        raise ValueError("SN60 candidate-only round requires at least one project key.")
+    if replicas_per_project <= 0:
+        raise ValueError("SN60 candidate-only round replicas_per_project must be positive.")
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=sandbox_root,
+        benchmark_file=benchmark_file,
+        sandbox_commit=sandbox_commit,
+        scorer_version="ScaBenchScorerV2",
+    )
+    validate_sn60_project_keys(project_keys, sandbox_source=source)
+    king_root = Path(king_artifact_path).expanduser().resolve()
+    king_hash = hash_bundle_root(king_root)
+    output_base = (
+        Path(output_root).expanduser().resolve() if output_root else Path("runs").resolve()
+    )
+    run_id = build_sn60_round_id()
+    round_root = output_base / run_id
+    round_root.mkdir(parents=True, exist_ok=False)
+    reason = king_skipped_reason or (
+        "Candidate-only recovery mode was enabled by the maintainer; "
+        "the current king was not evaluated."
+    )
+    resolved_execution_hook = execution_hook or build_default_execution_hook(source)
+    resolved_evaluation_hook = evaluation_hook or build_default_evaluation_hook(source)
+    per_variant_total = len(project_keys) * replicas_per_project
+    progress = {
+        "schema_version": DEFAULT_SN60_ROUND_SCHEMA_VERSION,
+        "state": "executing",
+        "run_id": run_id,
+        "competition_mode": "candidate_only",
+        "king_skipped": True,
+        "king_skipped_reason": reason,
+        "project_keys": list(project_keys),
+        "king": {"done": 0, "total": 0, "state": "skipped"},
+        "candidates": [
+            {"submission_id": sid, "done": 0, "total": per_variant_total, "state": "queued"}
+            for sid, _ in candidates
+        ],
+    }
+
+    def emit_progress() -> None:
+        if not progress_path:
+            return
+        progress["updated_at"] = datetime.now(UTC).isoformat()
+        path = Path(progress_path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(
+            json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(tmp_path, path)
+
+    def apply_running(
+        target: dict[str, object], acc: dict, replica_result: Sn60ReplicaResult
+    ) -> None:
+        acc["tp"] += replica_result.true_positives
+        acc["expected"] += replica_result.total_expected
+        acc["found"] += replica_result.total_found
+        if replica_result.evaluation_status != "success":
+            acc["invalid"] += 1
+        acc["projects"].append(
+            {
+                "project_key": replica_result.project_key,
+                "passed": replica_result.result == "PASS",
+                "detection_rate": replica_result.detection_rate,
+                "true_positives": replica_result.true_positives,
+                "total_expected": replica_result.total_expected,
+                "total_found": replica_result.total_found,
+                "precision": replica_result.precision,
+                "f1_score": replica_result.f1_score,
+            }
+        )
+        detection = acc["tp"] / acc["expected"] if acc["expected"] else 0.0
+        precision = acc["tp"] / acc["found"] if acc["found"] else 0.0
+        f1 = 2 * precision * detection / (precision + detection) if (precision + detection) else 0.0
+        target["aggregated_score"] = detection
+        target["precision"] = precision
+        target["f1_score"] = f1
+        target["true_positives"] = acc["tp"]
+        target["total_expected"] = acc["expected"]
+        target["total_found"] = acc["found"]
+        target["invalid_runs"] = acc["invalid"]
+        target["projects"] = list(acc["projects"])
+
+    def make_progress_callback(candidate_entry: dict[str, object]):
+        cand_acc = {"tp": 0, "expected": 0, "found": 0, "invalid": 0, "projects": []}
+
+        def callback(_context: Sn60ReplicaContext, replica_result: Sn60ReplicaResult) -> None:
+            candidate_entry["state"] = "scoring"
+            if candidate_entry["done"] < candidate_entry["total"]:
+                candidate_entry["done"] += 1
+            apply_running(candidate_entry, cand_acc, replica_result)
+            emit_progress()
+
+        return callback
+
+    emit_progress()
+    entries: list[Sn60RoundEntry] = []
+    sandbox_source: Sn60SandboxSource | None = None
+    for submission_id, candidate_artifact_path in candidates:
+        candidate_root = Path(candidate_artifact_path).expanduser().resolve()
+        candidate_hash = hash_bundle_root(candidate_root)
+        candidate_entry = next(
+            entry for entry in progress["candidates"] if entry["submission_id"] == submission_id
+        )
+        candidate_run_root = round_root / submission_id
+        candidate_results = score_variant_on_projects(
+            run_id=f"{run_id}-{submission_id}",
+            run_root=candidate_run_root,
+            variant_name="candidate",
+            artifact_root=candidate_root,
+            project_keys=project_keys,
+            replicas_per_project=replicas_per_project,
+            sandbox_source=source,
+            execution_hook=resolved_execution_hook,
+            evaluation_hook=resolved_evaluation_hook,
+            eval_max_vulns=DEFAULT_EVAL_MAX_VULNS,
+            progress_callback=make_progress_callback(candidate_entry),
+        )
+        sandbox_source = source
+        candidate_summary = summarize_variant(
+            variant_name="candidate",
+            artifact_root=candidate_root,
+            artifact_hash=candidate_hash,
+            replica_results=candidate_results,
+        )
+        candidate_entry["state"] = "done"
+        candidate_entry.update(_sn60_variant_progress(candidate_summary))
+        emit_progress()
+        candidate_summary_path = candidate_run_root / "candidate_summary.json"
+        candidate_summary_payload = {
+            "schema_version": DEFAULT_SN60_ROUND_SCHEMA_VERSION,
+            "competition_mode": "candidate_only",
+            "king_skipped": True,
+            "king_skipped_reason": reason,
+            "run_id": f"{run_id}-{submission_id}",
+            "created_at": datetime.now(UTC).isoformat(),
+            "output_root": str(candidate_run_root),
+            "project_keys": list(project_keys),
+            "replicas_per_project": replicas_per_project,
+            "sandbox_source": asdict(source),
+            "king": {
+                "artifact_path": str(king_root),
+                "artifact_hash": king_hash,
+                "evaluation_skipped": True,
+            },
+            "candidate": asdict(candidate_summary),
+        }
+        candidate_summary_path.write_text(
+            json.dumps(candidate_summary_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        entries.append(
+            Sn60RoundEntry(
+                submission_id=submission_id,
+                artifact_path=str(candidate_root),
+                artifact_hash=candidate_hash,
+                beats_king=None,
+                duel_run_id=f"{run_id}-{submission_id}",
+                candidate=candidate_summary,
+                selected_winner=False,
+            )
+        )
+
+    assert sandbox_source is not None
+    ranked = sorted(entries, key=lambda entry: sn60_variant_rank(entry.candidate), reverse=True)
+    winner = ranked[0]
+    final_entries = [
+        Sn60RoundEntry(
+            submission_id=entry.submission_id,
+            artifact_path=entry.artifact_path,
+            artifact_hash=entry.artifact_hash,
+            beats_king=None,
+            duel_run_id=entry.duel_run_id,
+            candidate=entry.candidate,
+            selected_winner=entry.submission_id == winner.submission_id,
+        )
+        for entry in ranked
+    ]
+    winner_summary_path = (
+        round_root / winner.submission_id / "candidate_only_challenge_summary.json"
+    )
+    winner_candidate_summary_path = round_root / winner.submission_id / "candidate_summary.json"
+    write_challenge_summary(
+        winner_summary_path,
+        sn60_candidate_only_to_challenge_summary(
+            candidate=winner.candidate,
+            candidate_summary_path=winner_candidate_summary_path,
+            king_artifact_path=str(king_root),
+            king_artifact_hash=king_hash,
+            sandbox_source=sandbox_source,
+            project_keys=project_keys,
+            replicas_per_project=replicas_per_project,
+            lane_id=SN60_MINER_LANE_ID,
+            reason=reason,
+        ),
+    )
+    result = Sn60RoundResult(
+        schema_version=DEFAULT_SN60_ROUND_SCHEMA_VERSION,
+        run_id=run_id,
+        created_at=datetime.now(UTC).isoformat(),
+        output_root=str(round_root),
+        project_keys=list(project_keys),
+        replicas_per_project=replicas_per_project,
+        sandbox_source=sandbox_source,
+        king=None,
+        entries=final_entries,
+        winner_submission_id=winner.submission_id,
+        promotion_ready=True,
+        promotion_reason=(
+            f"{winner.submission_id} won candidate-only recovery mode; "
+            "the current SN60 king was not evaluated"
+        ),
+        winner_challenge_summary_path=str(winner_summary_path),
+        competition_mode="candidate_only",
+        king_skipped_reason=reason,
     )
     progress["state"] = "completed"
     progress["winner_submission_id"] = result.winner_submission_id
@@ -1002,6 +1359,8 @@ def parse_challenge_pool(payload: dict[str, object]) -> ChallengePoolSummary:
         candidate_score_delta=float(
             payload.get("candidate_score_delta", round(candidate_score - king_score, 2))
         ),
+        competition_mode=str(payload.get("competition_mode") or "king_duel"),
+        king_skipped=bool(payload.get("king_skipped", False)),
     )
 
 
@@ -1019,6 +1378,9 @@ def render_pool(pool: ChallengePoolSummary) -> list[str]:
         lines.append(f"- {variant_name} score: {pool.variant_scores.get(variant_name, 0.0):.2f}")
     lines.append(f"- Candidate beats king: {'yes' if pool.candidate_beats_king else 'no'}")
     lines.append(f"- Candidate score delta: {pool.candidate_score_delta:+.2f}")
+    if pool.competition_mode == "candidate_only":
+        lines.append("- Competition mode: candidate-only recovery")
+        lines.append("- King evaluated: no")
     return lines
 
 

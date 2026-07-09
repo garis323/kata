@@ -165,9 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
         "submission",
         help="Manage miner agent submissions for PR-based competition.",
     )
-    submission_subparsers = submission.add_subparsers(
-        dest="submission_command", required=True
-    )
+    submission_subparsers = submission.add_subparsers(dest="submission_command", required=True)
 
     submission_init = submission_subparsers.add_parser(
         "init",
@@ -193,10 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     submission_init.add_argument(
         "--submission-id",
         required=True,
-        help=(
-            "Stable submission id. Recommended format: "
-            "`<github-username>-YYYYMMDD-NN`."
-        ),
+        help=("Stable submission id. Recommended format: `<github-username>-YYYYMMDD-NN`."),
     )
     submission_init.add_argument(
         "--output-root",
@@ -396,6 +391,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to the persistent per-project king score cache.",
     )
     round_cmd.add_argument(
+        "--candidate-only",
+        action="store_true",
+        help=(
+            "Recovery mode: score candidates against each other only and skip "
+            "evaluating the current king."
+        ),
+    )
+    round_cmd.add_argument(
         "--output-root",
         default=None,
         help="Optional base directory for round artifacts. Defaults to ./runs.",
@@ -419,20 +422,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-
-
-
-
 def handle_king_promote(args: argparse.Namespace) -> int:
     summary = load_challenge_summary(args.challenge_run)
     # Default to None (not cwd) so promotion resolves the public root the same
     # way `verify`/`decide`/`evaluate` do — honoring KATA_ROOT — instead of
     # silently writing kings/ + lane state into whatever directory it's run in.
-    public_root = (
-        str(Path(args.public_root).expanduser().resolve())
-        if args.public_root
-        else None
-    )
+    public_root = str(Path(args.public_root).expanduser().resolve()) if args.public_root else None
     result = promote_submission_result(
         args.submission_path or summary.candidate_artifact,
         args.challenge_run,
@@ -456,18 +451,6 @@ def handle_king_promote(args: argparse.Namespace) -> int:
     return 0
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def handle_submission_init(args: argparse.Namespace) -> int:
     submission_dir = init_submission(
         repo_pack=args.repo_pack,
@@ -489,11 +472,7 @@ def handle_submission_validate(args: argparse.Namespace) -> int:
         changed_paths=changed_paths,
         repo_root=args.repo_root,
     )
-    print(
-        render_submission_json(result)
-        if args.json
-        else render_submission_validation(result)
-    )
+    print(render_submission_json(result) if args.json else render_submission_validation(result))
     return 0 if result.is_valid else 2
 
 
@@ -502,11 +481,7 @@ def handle_submission_inspect(args: argparse.Namespace) -> int:
         repo_root=args.repo_root,
         changed_paths=collect_changed_paths(args.changed_path, args.changed_path_file),
     )
-    print(
-        render_submission_json(result)
-        if args.json
-        else render_pull_request_inspection(result)
-    )
+    print(render_submission_json(result) if args.json else render_pull_request_inspection(result))
     return 0 if result.action == "evaluate" else 2
 
 
@@ -538,21 +513,13 @@ def handle_submission_evaluate(args: argparse.Namespace) -> int:
 
 def handle_submission_verify(args: argparse.Namespace) -> int:
     result = verify_submission_result(args.path, args.challenge_run)
-    print(
-        render_submission_json(result)
-        if args.json
-        else render_submission_verification(result)
-    )
+    print(render_submission_json(result) if args.json else render_submission_verification(result))
     return 0 if result.auto_merge_ready else 2
 
 
 def handle_submission_decide(args: argparse.Namespace) -> int:
     result = decide_submission_action(args.path, args.challenge_run)
-    print(
-        render_submission_json(result)
-        if args.json
-        else render_submission_decision(result)
-    )
+    print(render_submission_json(result) if args.json else render_submission_decision(result))
     return 0 if result.action == "merge" else 2
 
 
@@ -583,6 +550,7 @@ def handle_round(args: argparse.Namespace) -> int:
         sandbox_commit=args.sn60_sandbox_commit,
         king_scoreboard_path=args.king_scoreboard,
         progress_path=args.round_progress_path,
+        candidate_only=args.candidate_only,
     )
     if args.json:
         print_json(
@@ -595,11 +563,14 @@ def handle_round(args: argparse.Namespace) -> int:
                 "winner_challenge_summary_path": result.winner_challenge_summary_path,
                 "promotion_ready": result.promotion_ready,
                 "promotion_reason": result.promotion_reason,
-                "king": _sn60_variant_detail(result.king),
+                "competition_mode": getattr(result, "competition_mode", "king_duel"),
+                "king_skipped_reason": getattr(result, "king_skipped_reason", None),
+                "king": _sn60_variant_detail(result.king) if result.king else None,
                 "entries": [
                     {
                         "submission_id": entry.submission_id,
                         "beats_king": entry.beats_king,
+                        "selected_winner": getattr(entry, "selected_winner", False),
                         "duel_run_id": entry.duel_run_id,
                         **_sn60_variant_detail(entry.candidate),
                     }
@@ -642,16 +613,27 @@ def _sn60_variant_detail(variant) -> dict:  # type: ignore[no-untyped-def]
 
 
 def render_round_result(result) -> str:  # type: ignore[no-untyped-def]
-    lines = [
-        f"SN60 round {result.run_id}",
-        f"king detection {result.king.aggregated_score:.3f} "
-        f"(tp {result.king.true_positives}/{result.king.total_expected})",
-        "ranking (best first):",
-    ]
-    for position, entry in enumerate(result.entries, start=1):
-        marker = "WINNER" if entry.submission_id == result.winner_submission_id else (
-            "beats-king" if entry.beats_king else "-"
+    lines = [f"SN60 round {result.run_id}"]
+    competition_mode = getattr(result, "competition_mode", "king_duel")
+    if competition_mode == "candidate_only":
+        lines.append("mode: candidate-only recovery")
+        lines.append("king evaluated: no")
+        king_skipped_reason = getattr(result, "king_skipped_reason", None)
+        if king_skipped_reason:
+            lines.append(f"reason: {king_skipped_reason}")
+    elif result.king is not None:
+        lines.append(
+            f"king detection {result.king.aggregated_score:.3f} "
+            f"(tp {result.king.true_positives}/{result.king.total_expected})"
         )
+    lines.append("ranking (best first):")
+    for position, entry in enumerate(result.entries, start=1):
+        if entry.submission_id == result.winner_submission_id:
+            marker = "WINNER"
+        elif entry.beats_king:
+            marker = "beats-king"
+        else:
+            marker = "-"
         lines.append(
             f"  {position}. {entry.submission_id} "
             f"detection {entry.candidate.aggregated_score:.3f} "

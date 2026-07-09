@@ -12,9 +12,7 @@ from kata.interfaces.cli import build_parser, main, parse_round_candidate
 def test_top_level_cli_exposes_agent_competition_commands() -> None:
     parser = build_parser()
     subparser_action = next(
-        action
-        for action in parser._actions
-        if getattr(action, "choices", None)
+        action for action in parser._actions if getattr(action, "choices", None)
     )
     commands = set(subparser_action.choices)
 
@@ -117,10 +115,7 @@ def test_lane_cli_accepts_subnet_pack_alias(tmp_path: Path, capsys) -> None:
     )
     capsys.readouterr()
 
-    assert (
-        main(["lane", "list", "--public-root", str(tmp_path), "--json"])
-        == 0
-    )
+    assert main(["lane", "list", "--public-root", str(tmp_path), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["packs"][0]["subnet_pack"] == "sn60__bitsec"
 
@@ -213,9 +208,12 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
     exit_code = main(
         [
             "round",
-            "--king-path", "/king",
-            "--candidate", "cand-b=/c-b",
-            "--sn60-project-key", "project-alpha",
+            "--king-path",
+            "/king",
+            "--candidate",
+            "cand-b=/c-b",
+            "--sn60-project-key",
+            "project-alpha",
             "--json",
         ]
     )
@@ -233,6 +231,71 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
     assert "projects" in payload["king"]
     assert payload["entries"][0]["precision"] == 0.66
     assert payload["entries"][0]["f1_score"] == 0.5
+
+
+def test_round_cli_supports_candidate_only_mode(monkeypatch, capsys) -> None:
+    import kata.interfaces.cli as cli
+
+    fake_result = types.SimpleNamespace(
+        run_id="sn60-round-recovery",
+        output_root="/tmp/runs/sn60-round-recovery",
+        winner_submission_id="cand-a",
+        winner_challenge_summary_path="/tmp/runs/sn60-round-recovery/challenge_summary.json",
+        promotion_ready=True,
+        promotion_reason="cand-a won candidate-only recovery mode",
+        competition_mode="candidate_only",
+        king_skipped_reason="candidate-only recovery enabled",
+        king=None,
+        entries=[
+            types.SimpleNamespace(
+                submission_id="cand-a",
+                beats_king=None,
+                selected_winner=True,
+                duel_run_id="candidate-only-cand-a",
+                candidate=types.SimpleNamespace(
+                    aggregated_score=0.5,
+                    average_detection_rate=0.5,
+                    true_positives=2,
+                    total_expected=4,
+                    total_found=3,
+                    precision=0.66,
+                    f1_score=0.5,
+                    invalid_runs=0,
+                    codebase_pass_count=2,
+                    project_summaries=[],
+                ),
+            )
+        ],
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_sn60_round(**kwargs):
+        captured.update(kwargs)
+        return fake_result
+
+    monkeypatch.setattr(cli, "run_sn60_round", fake_run_sn60_round)
+
+    exit_code = main(
+        [
+            "round",
+            "--king-path",
+            "/king",
+            "--candidate",
+            "cand-a=/c-a",
+            "--sn60-project-key",
+            "project-alpha",
+            "--candidate-only",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["candidate_only"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["competition_mode"] == "candidate_only"
+    assert payload["king"] is None
+    assert payload["entries"][0]["selected_winner"] is True
+    assert payload["entries"][0]["beats_king"] is None
     assert "projects" in payload["entries"][0]
 
 
@@ -286,11 +349,16 @@ def test_round_cli_samples_problems_when_keys_omitted(tmp_path, monkeypatch, cap
     exit_code = main(
         [
             "round",
-            "--king-path", str(king),
-            "--candidate", "cand=/tmp/cand",
-            "--sn60-sandbox-root", str(tmp_path / "sandbox"),
-            "--sn60-benchmark-file", str(benchmark),
-            "--sn60-sandbox-commit", "test-commit",
+            "--king-path",
+            str(king),
+            "--candidate",
+            "cand=/tmp/cand",
+            "--sn60-sandbox-root",
+            str(tmp_path / "sandbox"),
+            "--sn60-benchmark-file",
+            str(benchmark),
+            "--sn60-sandbox-commit",
+            "test-commit",
             "--json",
         ]
     )
