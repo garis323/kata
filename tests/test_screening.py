@@ -103,7 +103,7 @@ def test_resolve_llm_benchmark_file_uses_sandbox_root(
     assert resolve_llm_benchmark_file() == benchmark_path.resolve()
 
 
-def test_validate_sn60_static_screening_rejects_helper_files_and_leak_tokens(
+def test_validate_sn60_static_screening_allows_helper_files_but_rejects_leak_tokens(
     tmp_path: Path,
 ) -> None:
     bundle_root = tmp_path / "candidate"
@@ -116,7 +116,7 @@ def test_validate_sn60_static_screening_rejects_helper_files_and_leak_tokens(
 
     reasons = validate_sn60_static_screening(bundle_root)
 
-    assert any("do not support helper files in V1" in reason for reason in reasons)
+    assert not any("do not support helper files in V1" in reason for reason in reasons)
     assert any("benchmark-answer leakage token" in reason for reason in reasons)
 
 
@@ -142,7 +142,6 @@ def test_screen_submission_wraps_current_static_screening(tmp_path: Path) -> Non
     assert decision.rejection_messages() == validate_sn60_static_screening(bundle_root)
     assert {finding.rule_id for finding in decision.reject_reasons} == {
         "sn60.answer_key_token",
-        "sn60.helper_files",
     }
 
 
