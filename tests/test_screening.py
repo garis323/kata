@@ -5,6 +5,7 @@ from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import Sn60ReplicaContext, resolve_sn60_sandbox_source
 from kata.screening_system import screen_submission
+from kata.screening_system.llm_review import resolve_llm_benchmark_file
 from kata.screening_system.models import ScreeningFinding
 from kata.validator_system.screening import (
     SN60_SCREENING_STAGE_EXECUTION,
@@ -89,6 +90,17 @@ def write_replay_benchmark(root: Path) -> Path:
         encoding="utf-8",
     )
     return benchmark_path
+
+
+def test_resolve_llm_benchmark_file_uses_sandbox_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    benchmark_path = write_sandbox_source(tmp_path / "sandbox")
+    monkeypatch.delenv("KATA_SCREENING_LLM_BENCHMARK_FILE", raising=False)
+    monkeypatch.delenv("KATA_SN60_BENCHMARK_FILE", raising=False)
+    monkeypatch.setenv("KATA_SN60_SANDBOX_ROOT", str(tmp_path / "sandbox"))
+
+    assert resolve_llm_benchmark_file() == benchmark_path.resolve()
 
 
 def test_validate_sn60_static_screening_rejects_helper_files_and_leak_tokens(
