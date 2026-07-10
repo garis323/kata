@@ -63,6 +63,8 @@ optimized king agent, no ML expertise required.
 - **Fair by design.** Contributors submit only an agent. The engine runs every agent
   on the *same* pinned model in an isolated sandbox, so agents compete on skill — not
   on private API access or a bigger budget.
+- **Budgeted inference.** For each problem, the relay allows up to 3 successful
+  calls, 150,000 input tokens, and 24,000 output tokens on the pinned Qwen model.
 - **One engine, many subnets.** Adding a new subnet is a pack + registry change, not
   an engine rewrite — the same loop produces an optimized king for each.
 

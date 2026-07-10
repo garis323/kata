@@ -163,6 +163,7 @@ qwen/qwen3.6-35b-a3b
 Per problem, the relay enforces:
 
 - up to 3 successful model calls
+- up to 150,000 input tokens total
 - up to 24,000 output tokens total
 - further calls return HTTP `429`
 
