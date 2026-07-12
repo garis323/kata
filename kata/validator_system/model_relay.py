@@ -254,11 +254,6 @@ def resolve_pinned_model(api_key: str | None = None) -> str:
     return DEFAULT_PINNED_MODEL
 
 
-def resolve_akash_upstream() -> str:
-    """OpenAI-compatible AkashML chat-completions endpoint."""
-    return resolve_direct_provider("akml-test").upstream
-
-
 def resolve_max_output_tokens() -> int:
     """Ceiling the relay forces ``max_tokens`` up to so the reasoning model has
     room to think *and* answer without the proxy rejecting a length-truncated

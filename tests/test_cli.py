@@ -180,6 +180,9 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
         winner_challenge_summary_path="/tmp/runs/sn60-round-x/d-1/challenge_summary.json",
         promotion_ready=True,
         promotion_reason="cand-b beat the current SN60 king",
+        replicas_per_project=1,
+        competition_mode="king_duel",
+        king_skipped_reason=None,
         king=types.SimpleNamespace(
             aggregated_score=0.25,
             average_detection_rate=0.25,
@@ -196,6 +199,7 @@ def test_round_cli_parses_candidates_and_emits_json(monkeypatch, capsys) -> None
             types.SimpleNamespace(
                 submission_id="cand-b",
                 beats_king=True,
+                selected_winner=False,
                 duel_run_id="d-1",
                 candidate=types.SimpleNamespace(
                     aggregated_score=0.5,
@@ -258,6 +262,7 @@ def test_round_cli_supports_candidate_only_mode(monkeypatch, capsys) -> None:
         winner_challenge_summary_path="/tmp/runs/sn60-round-recovery/challenge_summary.json",
         promotion_ready=True,
         promotion_reason="cand-a won candidate-only recovery mode",
+        replicas_per_project=1,
         competition_mode="candidate_only",
         king_skipped_reason="candidate-only recovery enabled",
         king=None,
@@ -344,6 +349,9 @@ def test_round_cli_samples_problems_when_keys_omitted(tmp_path, monkeypatch, cap
             winner_challenge_summary_path=None,
             promotion_ready=False,
             promotion_reason="no candidate beat the current SN60 king",
+            replicas_per_project=1,
+            competition_mode="king_duel",
+            king_skipped_reason=None,
             king=types.SimpleNamespace(
                 aggregated_score=0.0,
                 average_detection_rate=0.0,

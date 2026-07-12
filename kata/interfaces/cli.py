@@ -587,11 +587,7 @@ def handle_round(args: argparse.Namespace) -> int:
         progress_path=args.round_progress_path,
         candidate_only=args.candidate_only,
     )
-    runs_per_project = getattr(
-        result,
-        "replicas_per_project",
-        args.sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
-    )
+    runs_per_project = result.replicas_per_project
     if args.json:
         print_json(
             {
@@ -603,8 +599,8 @@ def handle_round(args: argparse.Namespace) -> int:
                 "winner_challenge_summary_path": result.winner_challenge_summary_path,
                 "promotion_ready": result.promotion_ready,
                 "promotion_reason": result.promotion_reason,
-                "competition_mode": getattr(result, "competition_mode", "king_duel"),
-                "king_skipped_reason": getattr(result, "king_skipped_reason", None),
+                "competition_mode": result.competition_mode,
+                "king_skipped_reason": result.king_skipped_reason,
                 "validator_replica_count": 1,
                 "runs_per_project": runs_per_project,
                 "project_pass_threshold": project_pass_threshold_label(runs_per_project),
@@ -613,7 +609,7 @@ def handle_round(args: argparse.Namespace) -> int:
                     {
                         "submission_id": entry.submission_id,
                         "beats_king": entry.beats_king,
-                        "selected_winner": getattr(entry, "selected_winner", False),
+                        "selected_winner": entry.selected_winner,
                         "duel_run_id": entry.duel_run_id,
                         **_sn60_variant_detail(entry.candidate),
                     }
@@ -638,11 +634,7 @@ def handle_sn60_baseline(args: argparse.Namespace) -> int:
         benchmark_file=args.sn60_benchmark_file,
         sandbox_commit=args.sn60_sandbox_commit,
     )
-    runs_per_project = getattr(
-        result,
-        "replicas_per_project",
-        args.sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
-    )
+    runs_per_project = result.replicas_per_project
     if args.json:
         print_json(
             {
@@ -712,11 +704,11 @@ def _sn60_variant_detail(variant) -> dict:  # type: ignore[no-untyped-def]
 
 def render_round_result(result) -> str:  # type: ignore[no-untyped-def]
     lines = [f"SN60 round {result.run_id}"]
-    competition_mode = getattr(result, "competition_mode", "king_duel")
+    competition_mode = result.competition_mode
     if competition_mode == "candidate_only":
         lines.append("mode: candidate-only recovery")
         lines.append("king evaluated: no")
-        king_skipped_reason = getattr(result, "king_skipped_reason", None)
+        king_skipped_reason = result.king_skipped_reason
         if king_skipped_reason:
             lines.append(f"reason: {king_skipped_reason}")
     elif result.king is not None:

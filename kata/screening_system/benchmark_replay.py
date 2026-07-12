@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from kata.screening_system.models import ScreeningFinding
+from kata.screening_system.models import ScreeningFinding, dedupe_findings
 
 SN60_SANDBOX_ROOT_ENV = "KATA_SN60_SANDBOX_ROOT"
 SN60_BENCHMARK_FILE_ENV = "KATA_SN60_BENCHMARK_FILE"
@@ -491,7 +491,7 @@ def find_project_fingerprint_branches(
                     evidence=f"matched_tokens={best_count}; points=4",
                 )
             )
-    return dedupe_findings(findings)
+    return dedupe_findings(findings, by_reason=False)
 
 
 def project_fingerprint_matches(
@@ -764,18 +764,6 @@ def python_sources(bundle_files: dict[str, str]):
     for relative_path, content in sorted(bundle_files.items()):
         if relative_path.endswith(".py"):
             yield relative_path, content
-
-
-def dedupe_findings(findings: list[ScreeningFinding]) -> list[ScreeningFinding]:
-    deduped: list[ScreeningFinding] = []
-    seen: set[tuple[str, str | None, int | None]] = set()
-    for finding in findings:
-        key = (finding.rule_id, finding.path, finding.line)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(finding)
-    return deduped
 
 
 def line_for_offset(content: str, offset: int) -> int:

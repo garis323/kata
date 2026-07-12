@@ -48,18 +48,6 @@ def iter_direct_function_returns(function_node: ast.FunctionDef):
         stack.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
-def iter_non_nested_function_returns(function_node: ast.FunctionDef):
-    stack: list[ast.AST] = list(reversed(function_node.body))
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Return):
-            yield node
-            continue
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
-
-
 def dict_contains_string_key(node: ast.Dict, key_name: str) -> bool:
     for key in node.keys:
         if isinstance(key, ast.Constant) and key.value == key_name:

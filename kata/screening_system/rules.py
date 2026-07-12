@@ -12,12 +12,12 @@ from kata.ast_utils import (
     function_supports_no_arg_invocation,
 )
 from kata.provenance import sha256_directory
-from kata.screening_system.models import ScreeningFinding
+from kata.screening_system.models import ScreeningFinding, dedupe_findings
 from kata.screening_system.python_ast import (
     agent_main_returns_direct_constant_report,
     agent_main_returns_direct_empty_report,
     dict_contains_string_key,
-    iter_non_nested_function_returns,
+    iter_direct_function_returns,
 )
 from kata.submission_system.bundle import (
     AGENT_ENTRY_FILENAME,
@@ -440,7 +440,7 @@ def screen_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[Scree
             )
         ]
 
-    for return_node in iter_non_nested_function_returns(agent_main_fn):
+    for return_node in iter_direct_function_returns(agent_main_fn):
         if return_node.value is None or not isinstance(return_node.value, ast.Dict):
             continue
         if not dict_contains_string_key(return_node.value, "vulnerabilities"):
@@ -512,18 +512,6 @@ def reject_finding(
 
 def finding_reasons(findings: list[ScreeningFinding]) -> list[str]:
     return dedupe([finding.reason for finding in findings])
-
-
-def dedupe_findings(findings: list[ScreeningFinding]) -> list[ScreeningFinding]:
-    deduped: list[ScreeningFinding] = []
-    seen: set[tuple[str, str, str | None, int | None]] = set()
-    for finding in findings:
-        key = (finding.rule_id, finding.reason, finding.path, finding.line)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(finding)
-    return deduped
 
 
 def required_submission_entrypoint_reason() -> str:

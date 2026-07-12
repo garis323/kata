@@ -9,9 +9,12 @@ from kata.screening_system.benchmark_replay import (
     is_concrete_replay_finding,
 )
 from kata.screening_system.llm_review import review_suspicious_submission_with_llm
-from kata.screening_system.models import ScreeningDecision, ScreeningFinding
-from kata.screening_system.rules import (
+from kata.screening_system.models import (
+    ScreeningDecision,
+    ScreeningFinding,
     dedupe_findings,
+)
+from kata.screening_system.rules import (
     screen_bundle_python_sources,
     screen_bundle_static_policy,
     screen_sn60_static_bundle,
