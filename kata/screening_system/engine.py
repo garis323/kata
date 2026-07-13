@@ -27,6 +27,33 @@ STRICT_REPLAY_ENV = "KATA_SCREENING_STRICT_REPLAY"
 REVIEW_MODE_ENV = "KATA_SCREENING_REVIEW_MODE"
 
 
+def _plugin_static_screen_findings(
+    *,
+    submission_root: Path,
+    repo_pack: str | None,
+    mode: str,
+    public_root: Path | None,
+) -> list:
+    """Per-subnet static screening findings from the lane's plugin, if any.
+
+    Lazily imports the dispatch/registry to avoid import cycles. Returns an empty
+    list for lanes whose plugin adds no subnet-specific static checks (e.g. SN60).
+    """
+    if not repo_pack:
+        return []
+    from kata.packages.dispatch import plugin_for_evaluator
+    from kata.promotion_system import find_evaluator_pack_entry
+
+    entry = find_evaluator_pack_entry(
+        repo_pack, mode, public_root=str(public_root) if public_root else None
+    )
+    plugin = plugin_for_evaluator(entry.evaluator_id) if entry is not None else None
+    if plugin is None:
+        return []
+    findings = plugin.static_screen(str(submission_root))
+    return list(findings) if findings else []
+
+
 def screen_submission(
     *,
     submission_root: Path,
@@ -49,6 +76,16 @@ def screen_submission(
     reject_findings.extend(screen_bundle_python_sources(bundle_files))
     reject_findings.extend(screen_bundle_static_policy(bundle_files))
     reject_findings.extend(screen_sn60_static_bundle(bundle_files))
+    # Per-subnet static checks are dispatched through the lane's plugin; the generic
+    # anti-cheat checks above run for every subnet.
+    reject_findings.extend(
+        _plugin_static_screen_findings(
+            submission_root=submission_root,
+            repo_pack=repo_pack,
+            mode=mode,
+            public_root=public_root,
+        )
+    )
     review_findings, review_score = analyze_benchmark_replay(bundle_files)
     copycat_rejects, copycat_reviews, copycat_score = screen_current_king_copycat(
         submission_root=submission_root,
