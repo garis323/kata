@@ -11,6 +11,7 @@ from kata.screening_system.mutation_canary import (
     find_rename_dependent_findings,
     rename_solidity_identifiers,
     run_rename_invariance_canary,
+    stable_findings,
 )
 
 SOLIDITY = """
@@ -105,6 +106,64 @@ def test_canary_passes_genuine_analyzer() -> None:
     assert result.suspicious is False
     assert result.original_count == 1 and result.renamed_count == 1
     assert result.rename_dependent == []
+
+
+def _hybrid_agent():
+    """A realistic king: a deterministic canned fingerprint finding PLUS a
+    non-deterministic LLM finding that is reworded on every run."""
+    counter = {"n": 0}
+
+    def agent(source: str) -> list[dict]:
+        counter["n"] += 1
+        out: list[dict] = []
+        if "hypebuffer" in source.lower():
+            out.append({"title": "Buffer bug", "description": "Canned finding about buffer."})
+        out.append(
+            {"title": f"LLM insight {counter['n']}", "description": f"reworded {counter['n']}"}
+        )
+        return out
+
+    return agent
+
+
+def _pure_llm_agent():
+    """A genuine analyzer with no fingerprints: every finding is reworded per run."""
+    counter = {"n": 0}
+
+    def agent(source: str) -> list[dict]:
+        counter["n"] += 1
+        return [{"title": f"LLM insight {counter['n']}", "description": f"reworded {counter['n']}"}]
+
+    return agent
+
+
+def test_canary_isolates_canned_finding_from_llm_noise() -> None:
+    # The hybrid king's canned fingerprint collapses under renaming; its varying LLM
+    # findings must NOT be mistaken for fingerprints.
+    result = run_rename_invariance_canary(
+        run_agent=_hybrid_agent(), project_source=SOLIDITY, original_runs=2
+    )
+    assert result.suspicious is True
+    assert result.rename_dependent == ["Buffer bug"]  # only the canned finding, not the LLM ones
+
+
+def test_canary_does_not_flag_non_deterministic_analyzer() -> None:
+    # A genuine analyzer whose findings vary run-to-run has NO stable findings, so
+    # nothing is flagged despite verbatim differences (no false positive from LLM noise).
+    result = run_rename_invariance_canary(
+        run_agent=_pure_llm_agent(), project_source=SOLIDITY, original_runs=2
+    )
+    assert result.suspicious is False
+    assert result.rename_dependent == []
+
+
+def test_stable_findings_keeps_only_findings_identical_across_runs() -> None:
+    runs = [
+        [{"title": "stable", "description": "x"}, {"title": "a", "description": "1"}],
+        [{"title": "stable", "description": "x"}, {"title": "b", "description": "2"}],
+    ]
+    stable = stable_findings(runs)
+    assert [f["title"] for f in stable] == ["stable"]
 
 
 def test_find_rename_dependent_findings_matches_verbatim() -> None:

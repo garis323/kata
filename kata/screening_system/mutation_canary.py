@@ -138,6 +138,29 @@ def _finding_key(finding: dict) -> str:
     return f"{title}\x00{description}"
 
 
+def stable_findings(run_results: list[list[dict]]) -> list[dict]:
+    """Findings that appear byte-identically in EVERY run.
+
+    Real agents are hybrids: a deterministic pattern layer plus a non-deterministic LLM
+    audit whose findings are reworded run-to-run. Only findings identical across all
+    runs are deterministic -- the hallmark of a hardcoded/canned finding. Isolating
+    these makes the canary robust to inference non-determinism (no false positives from
+    LLM rewording).
+    """
+    if not run_results:
+        return []
+    key_sets = [{_finding_key(f) for f in result} for result in run_results]
+    stable_keys = set.intersection(*key_sets)
+    seen: set[str] = set()
+    out: list[dict] = []
+    for finding in run_results[0]:
+        key = _finding_key(finding)
+        if key in stable_keys and key not in seen:
+            seen.add(key)
+            out.append(finding)
+    return out
+
+
 @dataclass(frozen=True)
 class CanaryResult:
     suspicious: bool
@@ -197,19 +220,23 @@ def run_rename_invariance_canary(
     run_agent: Callable[[str], list[dict]],
     project_source: str,
     salt: str = "canary",
+    original_runs: int = 2,
     min_rename_dependent: int = 1,
 ) -> CanaryResult:
     """Run the agent on the original and a renamed copy of the source, then assess.
 
     ``run_agent(source) -> findings`` is injected: production supplies a runner that
-    executes the agent in the sandbox against the given source (original vs. a
-    renamed overlay); tests supply an in-process stub.
+    executes the agent in the sandbox against the given source (original vs. a renamed
+    overlay); tests supply an in-process stub. The original is run ``original_runs``
+    times to isolate deterministic (canned) findings from non-deterministic LLM output,
+    so only findings that are both stable AND rename-fragile are flagged.
     """
-    original_findings = run_agent(project_source)
+    original_results = [run_agent(project_source) for _ in range(max(1, original_runs))]
+    deterministic = stable_findings(original_results)
     renamed_source, _mapping = rename_solidity_identifiers(project_source, salt=salt)
     renamed_findings = run_agent(renamed_source)
     return assess_rename_invariance(
-        original_findings,
+        deterministic,
         renamed_findings,
         min_rename_dependent=min_rename_dependent,
     )
