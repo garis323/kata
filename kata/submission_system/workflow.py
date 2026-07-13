@@ -7,8 +7,8 @@ from pathlib import Path
 from kata import validator_system as _validator_system
 from kata.evaluators.sn60_bitsec import (
     DEFAULT_REPLICAS_PER_PROJECT,
-    SN60_BITSEC_EVALUATOR_ID,
 )
+from kata.packages.dispatch import plugin_for_evaluator
 from kata.promotion_system import LanePromotionResult
 from kata.promotion_system import (
     find_evaluator_pack_entry as find_evaluator_pack_entry,
@@ -299,9 +299,22 @@ def evaluate_submission(
     )
 
 
+def plugin_for_submission(
+    metadata: SubmissionMetadata, *, public_root: str | None = None
+):
+    """The subnet plugin registered for this submission's lane, or ``None``."""
+    entry = find_evaluator_pack_entry(
+        metadata.repo_pack, metadata.mode, public_root=public_root
+    )
+    if entry is None:
+        return None
+    return plugin_for_evaluator(entry.evaluator_id)
+
+
 def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
-    entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
-    return entry is not None and entry.evaluator_id == SN60_BITSEC_EVALUATOR_ID
+    # A submission is evaluable when a subnet plugin is registered for its lane; the
+    # dispatch is by evaluator id, not a hardcoded SN60 check.
+    return plugin_for_submission(metadata) is not None
 
 
 def sn60_lane_benchmark_is_current(
@@ -446,6 +459,11 @@ def verify_submission_result(
             "No evaluator-backed lane is registered for "
             f"`{validation.metadata.repo_pack}/{validation.metadata.mode}`."
         )
+    # Freshness is checked against the lane's plugin identity, not a hardcoded model.
+    plugin = plugin_for_evaluator(evaluator_entry.evaluator_id)
+    validator_identity = (
+        plugin.validator_identity if plugin is not None else SN60_VALIDATOR_MODEL
+    )
     current_king_hash = (
         resolve_sn60_lane_king_hash(
             evaluator_entry.lane_id,
@@ -464,7 +482,7 @@ def verify_submission_result(
     )
     king_is_current = summary.king_artifact_hash == current_king_hash
     benchmark_is_current = (
-        summary.validator_model == SN60_VALIDATOR_MODEL and lane_benchmark_is_current
+        summary.validator_model == validator_identity and lane_benchmark_is_current
     )
     current_promotion_ready = summary.promotion_ready
 
@@ -495,7 +513,7 @@ def verify_submission_result(
         recorded_candidate_artifact_hash=summary.candidate_artifact_hash,
         current_king_artifact_hash=current_king_hash,
         recorded_king_artifact_hash=summary.king_artifact_hash,
-        current_validator_model=SN60_VALIDATOR_MODEL,
+        current_validator_model=validator_identity,
         recorded_validator_model=summary.validator_model,
         submission_matches_challenge=submission_matches,
         king_is_current=king_is_current,
