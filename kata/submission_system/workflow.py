@@ -545,9 +545,23 @@ def decide_submission_action(
             auto_merge_ready=verification.auto_merge_ready,
         )
 
-    stale_reasons = [
-        reason for reason in verification.reasons if "stale" in reason or "does not match" in reason
-    ]
+    # Classify "rerun (stale)" vs "close (losing)" from the structured verification
+    # flags, not by substring-matching the human-readable reason text: a result is
+    # stale/rerunnable when the payload, king, or benchmark it was scored against no
+    # longer matches the current state, regardless of how the reason is worded.
+    stale_reasons: list[str] = []
+    if not verification.submission_matches_challenge:
+        stale_reasons.append(
+            "Challenge result does not match the current submission payload."
+        )
+    if not verification.king_is_current:
+        stale_reasons.append(
+            "Challenge result is stale because the king artifact has changed."
+        )
+    if not verification.benchmark_is_current:
+        stale_reasons.append(
+            "Challenge result is stale because the SN60 benchmark lane has changed."
+        )
     if stale_reasons:
         return SubmissionDecisionResult(
             action=PR_ACTION_RERUN_STALE,

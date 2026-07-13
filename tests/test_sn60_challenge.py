@@ -978,6 +978,64 @@ def test_run_sn60_round_optional_screener_skips_failed_candidate(
     assert ran["king"] == 1
 
 
+def test_run_sn60_round_completes_when_every_candidate_fails_screener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If the execution screener rejects every candidate, no duel ever runs and the
+    # king is never scored. The round must still resolve as a clean no-winner
+    # result (king=None) rather than crashing on an assertion.
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    king_root = tmp_path / "king"
+    _write_detection_bundle(king_root, 0.25)
+    candidates = []
+    for name in ("cand-a", "cand-b"):
+        path = tmp_path / name
+        _write_detection_bundle(path, 0.0)  # detection 0.0 -> screener fails
+        candidates.append((name, str(path)))
+    monkeypatch.setenv("KATA_SN60_ENABLE_SCREENER_PROJECT", "1")
+    monkeypatch.setenv("KATA_SN60_SCREENER_PROJECT_KEY", "project-alpha")
+    ran: dict[str, int] = {}
+
+    def execute(context: Sn60ReplicaContext) -> dict[str, object]:
+        ran[context.variant_name] = ran.get(context.variant_name, 0) + 1
+        if context.variant_name == "screening":
+            return {"success": False, "error": "candidate failed smoke run"}
+        return {"success": True, "report": {"vulnerabilities": [{"title": "v"}]}}
+
+    result = run_sn60_round(
+        king_artifact_path=str(king_root),
+        candidates=candidates,
+        project_keys=["project-alpha"],
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-all-screened",
+        king_scoreboard_path=str(tmp_path / "king_scoreboard.json"),
+        execution_hook=execute,
+        evaluation_hook=lambda context, report: {"status": "success", "result": {}},
+    )
+
+    assert result.king is None
+    assert result.winner_submission_id is None
+    assert result.promotion_ready is False
+    assert {entry.submission_id for entry in result.entries} == {"cand-a", "cand-b"}
+    assert all(
+        entry.screening_result["status"] == "failed" for entry in result.entries
+    )
+    assert ran.get("candidate", 0) == 0  # no duel ran
+    assert ran.get("king", 0) == 0  # king never scored
+    # The round summary is written and re-readable with a null king.
+    summary = json.loads(
+        (tmp_path / "runs" / result.run_id / "round_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["king"] is None
+
+
 def test_run_sn60_round_has_no_winner_when_none_beats_king(tmp_path: Path) -> None:
     sandbox_root = tmp_path / "sandbox"
     benchmark_path = write_sandbox_source(sandbox_root)

@@ -1077,7 +1077,11 @@ def run_sn60_round(
             )
         )
 
-    assert king_summary is not None and sandbox_source is not None
+    # king_summary stays None when every candidate failed the execution screener
+    # (no duel ever ran). That is a valid no-winner round -- Sn60RoundResult.king is
+    # Optional -- not an error, so do not assert on it. sandbox_source is seeded
+    # from `source` and never None; assert only to narrow the type for the result.
+    assert sandbox_source is not None
     ranked = sorted(entries, key=lambda entry: sn60_variant_rank(entry.candidate), reverse=True)
     winner = next((entry for entry in ranked if entry.beats_king), None)
     # Persist the winner's promotion artifact from the duel it already ran, so the
@@ -1218,7 +1222,9 @@ def run_sn60_candidate_only_round(
 
     emit_progress()
     entries: list[Sn60RoundEntry] = []
-    sandbox_source: Sn60SandboxSource | None = None
+    # Seed from the resolved sandbox source so the result is well-formed even when
+    # every candidate fails the screener and no scoring run reassigns it.
+    sandbox_source: Sn60SandboxSource | None = source
     for submission_id, candidate_artifact_path in candidates:
         candidate_root = Path(candidate_artifact_path).expanduser().resolve()
         candidate_hash = hash_bundle_root(candidate_root)
