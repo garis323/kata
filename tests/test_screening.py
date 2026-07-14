@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kata.evaluators.sn60_bitsec import Sn60ReplicaContext, resolve_sn60_sandbox_source
+from kata.packages.sn60.sn60_bitsec import Sn60ReplicaContext, resolve_sn60_sandbox_source
 from kata.packages.sn60.validator_system.screening import (
     SN60_SCREENING_STAGE_EXECUTION,
     SN60_SCREENING_STAGE_STATIC,

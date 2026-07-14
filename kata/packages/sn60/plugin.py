@@ -1,6 +1,6 @@
 """SN60 bitsec as a Kata subnet plugin (Phase 2 of the multi-subnet refactor).
 
-This wraps the existing ``kata.evaluators.sn60_bitsec`` functions behind the
+This wraps the existing ``kata.packages.sn60.sn60_bitsec`` functions behind the
 :class:`SubnetPlugin` contract. It is pure delegation -- no scoring or behavior
 change -- so the golden characterization tests are unaffected. Nothing in the core
 calls this yet; Phase 3 routes the generic round orchestrator through it.
@@ -12,7 +12,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.plugin import (
+    EnvSpec,
+    ProgressUpdate,
+    RunContext,
+    ScoreCard,
+    ScoringProfile,
+    SubnetPlugin,
+)
+from kata.packages.sn60.sn60_bitsec import (
     Sn60EvaluationHook,
     Sn60ExecutionHook,
     Sn60ReplicaResult,
@@ -24,14 +32,6 @@ from kata.evaluators.sn60_bitsec import (
     resolve_sn60_sandbox_source,
     score_variant_on_projects,
     summarize_variant,
-)
-from kata.packages.plugin import (
-    EnvSpec,
-    ProgressUpdate,
-    RunContext,
-    ScoreCard,
-    ScoringProfile,
-    SubnetPlugin,
 )
 from kata.packages.sn60.validator_system.challenge import (
     SN60_MINER_LANE_ID,

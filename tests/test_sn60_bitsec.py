@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.sn60.sn60_bitsec import (
     Sn60ReplicaContext,
     Sn60ReplicaResult,
     Sn60SandboxSource,
@@ -381,7 +381,7 @@ def _make_context(tmp_path: Path, source, **overrides) -> Sn60ReplicaContext:
 def test_build_bitsec_evaluation_command_uses_synthetic_ids_and_eval_max_vulns(
     tmp_path: Path,
 ) -> None:
-    from kata.evaluators.sn60_bitsec import build_bitsec_evaluation_command
+    from kata.packages.sn60.sn60_bitsec import build_bitsec_evaluation_command
 
     sandbox_root = tmp_path / "sandbox"
     benchmark_path = write_sandbox_source(sandbox_root)
@@ -462,7 +462,7 @@ def test_resolve_sn60_sandbox_source_rejects_mismatched_benchmark_filename(
 def test_default_evaluation_hook_points_validator_dir_at_recorded_benchmark(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from kata.evaluators.sn60_bitsec import build_default_evaluation_hook
+    from kata.packages.sn60.sn60_bitsec import build_default_evaluation_hook
 
     sandbox_root = tmp_path / "sandbox"
     benchmark_path = write_sandbox_source(sandbox_root)
@@ -500,7 +500,7 @@ def test_default_evaluation_hook_points_validator_dir_at_recorded_benchmark(
 def test_default_evaluation_hook_skips_scorer_on_empty_findings(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from kata.evaluators.sn60_bitsec import build_default_evaluation_hook
+    from kata.packages.sn60.sn60_bitsec import build_default_evaluation_hook
 
     sandbox_root = tmp_path / "sandbox"
     benchmark_path = write_sandbox_source(sandbox_root)
@@ -619,7 +619,7 @@ def test_default_evaluation_hook_rejects_infrastructure_execution_failure(
 def _run_default_execution_hook_with_report(tmp_path, monkeypatch, source, report_text):
     """Drive the default execution hook with the docker/subprocess edges mocked,
     after the (untrusted) agent wrote `report_text` to report.json."""
-    from kata.evaluators import sn60_bitsec as sn60
+    from kata.packages.sn60 import sn60_bitsec as sn60
 
     context = _make_context(tmp_path, source)
     Path(context.report_path).parent.mkdir(parents=True, exist_ok=True)
@@ -638,7 +638,7 @@ def _run_default_execution_hook_with_report(tmp_path, monkeypatch, source, repor
 def test_default_execution_hook_marks_docker_run_failure_as_infrastructure_error(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from kata.evaluators import sn60_bitsec as sn60
+    from kata.packages.sn60 import sn60_bitsec as sn60
 
     sandbox_root = tmp_path / "sandbox"
     benchmark_path = write_sandbox_source(sandbox_root)
@@ -861,7 +861,7 @@ def test_extract_evaluation_metrics_tolerates_malformed_numbers() -> None:
 def test_execution_subprocess_env_strips_validator_scoring_secrets(
     monkeypatch,
 ) -> None:
-    from kata.evaluators.sn60_bitsec import execution_subprocess_env
+    from kata.packages.sn60.sn60_bitsec import execution_subprocess_env
 
     monkeypatch.setenv("CHUTES_API_KEY", "scoring-key")
     monkeypatch.setenv("KATA_VALIDATOR_API_KEY", "validator-key")
@@ -877,7 +877,7 @@ def test_execution_subprocess_env_strips_validator_scoring_secrets(
 def test_build_bitsec_evaluation_command_quotes_interpolated_values(
     tmp_path: Path,
 ) -> None:
-    from kata.evaluators.sn60_bitsec import build_bitsec_evaluation_command
+    from kata.packages.sn60.sn60_bitsec import build_bitsec_evaluation_command
 
     context = Sn60ReplicaContext(
         run_id="run-1",
@@ -1450,7 +1450,7 @@ def test_cached_king_scoreboard_saves_are_serialized(
         with save_lock:
             active_saves -= 1
 
-    monkeypatch.setattr("kata.evaluators.sn60_bitsec.save_king_scoreboard", fake_save)
+    monkeypatch.setattr("kata.packages.sn60.sn60_bitsec.save_king_scoreboard", fake_save)
 
     _execute, evaluate = build_cached_king_hooks(
         scoreboard_path=scoreboard,

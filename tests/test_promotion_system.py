@@ -4,7 +4,7 @@ import json
 import types
 from pathlib import Path
 
-from kata.evaluators.sn60_bitsec import hash_bundle_root
+from kata.packages.sn60.sn60_bitsec import hash_bundle_root
 from kata.promotion_system import (
     find_evaluator_pack_entry,
     promote_lane_king,

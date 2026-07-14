@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.sn60.sn60_bitsec import (
     DEFAULT_EVAL_MAX_VULNS,
     DEFAULT_REPLICAS_PER_PROJECT,
     Sn60DuelSummary,

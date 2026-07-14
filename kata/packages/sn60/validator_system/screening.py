@@ -12,7 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.sn60.sn60_bitsec import (
     Sn60ReplicaContext,
     Sn60SandboxSource,
     build_default_execution_hook,

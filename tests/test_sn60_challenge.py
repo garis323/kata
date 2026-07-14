@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.sn60.promotion import load_sn60_duel_summary
+from kata.packages.sn60.sn60_bitsec import (
     Sn60ProjectAggregate,
     Sn60ReplicaContext,
     Sn60ReplicaResult,
     Sn60VariantSummary,
 )
-from kata.packages.sn60.promotion import load_sn60_duel_summary
 from kata.packages.sn60.validator_system import (
     SN60_MINER_LANE_ID,
     evaluate_sn60_promotion,

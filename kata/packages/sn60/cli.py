@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kata.evaluators.sn60_bitsec import DEFAULT_REPLICAS_PER_PROJECT
+from kata.packages.sn60.sn60_bitsec import DEFAULT_REPLICAS_PER_PROJECT
 from kata.packages.sn60.validator_system import (
     project_pass_threshold_label,
     run_sn60_baseline_only,

@@ -1127,7 +1127,7 @@ def test_promote_records_published_king_hash_for_non_normalized_agent(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    from kata.evaluators.sn60_bitsec import hash_bundle_root
+    from kata.packages.sn60.sn60_bitsec import hash_bundle_root
 
     # An agent.py WITHOUT a trailing newline: publishing normalizes it
     # (write_bundle_files appends "\n"), so the published king bytes differ

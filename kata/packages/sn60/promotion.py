@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.sn60.sn60_bitsec import (
     Sn60DuelSummary,
     Sn60ProjectAggregate,
     Sn60ReplicaResult,

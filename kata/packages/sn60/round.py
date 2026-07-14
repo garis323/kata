@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from kata.core.round import RoundOutcome, ScoredVariant, run_plugin_round
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.sn60.sn60_bitsec import (
     Sn60DuelSummary,
     hash_bundle_root,
     write_sn60_duel_summary,

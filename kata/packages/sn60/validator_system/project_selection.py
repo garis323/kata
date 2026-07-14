@@ -4,7 +4,7 @@ import hashlib
 import os
 import secrets
 
-from kata.evaluators.sn60_bitsec import (
+from kata.packages.sn60.sn60_bitsec import (
     load_sn60_benchmark_project_keys,
     resolve_sn60_sandbox_source,
 )
