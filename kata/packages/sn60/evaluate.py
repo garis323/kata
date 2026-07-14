@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import DEFAULT_REPLICAS_PER_PROJECT
-from kata.promotion_system import resolve_sn60_king_artifact
+from kata.promotion_system import resolve_lane_king_artifact
 from kata.screening_system.rules import hash_submission_bundle
 from kata.submission_system.workflow import is_evaluable_submission, validate_submission
 from kata.validator_system import (
@@ -41,7 +41,7 @@ def evaluate_submission(
             "Submission does not target a registered SN60 evaluator lane. "
             "Register the lane in the pack registry before evaluating."
         )
-    lane_id, king_artifact_path = resolve_sn60_king_artifact(validation.metadata)
+    lane_id, king_artifact_path = resolve_lane_king_artifact(validation.metadata)
     project_keys = resolve_sn60_project_keys(
         configured_keys=sn60_project_keys,
         sandbox_root=sn60_sandbox_root,

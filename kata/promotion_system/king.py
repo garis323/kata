@@ -67,7 +67,7 @@ def resolve_lane_king_hash(
     mode: str,
     public_root: str | None = None,
 ) -> str | None:
-    """Resolve the current king artifact hash for a registry-backed SN60 lane."""
+    """Resolve the current king artifact hash for a registry-backed lane."""
     if lane_king_state_path(lane_id, public_root=public_root).exists():
         king = load_lane_king_state(lane_id, public_root=public_root)
         if king.current_king_artifact_hash:
@@ -78,8 +78,8 @@ def resolve_lane_king_hash(
     return None
 
 
-def resolve_sn60_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
-    """Resolve (lane_id, king_artifact_path) for an SN60 duel from the pack registry."""
+def resolve_lane_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
+    """Resolve (lane_id, king_artifact_path) for a lane duel from the pack registry."""
     entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
     if entry is None:
         raise ValueError(
@@ -92,7 +92,7 @@ def resolve_sn60_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
     )
     if not (king_root / SUBMISSION_AGENT_FILENAME).exists():
         raise ValueError(
-            f"SN60 lane king artifact is not seeded: {king_root}. "
+            f"Lane king artifact is not seeded: {king_root}. "
             "Seed the current king under kings/<subnet-pack>/<mode>/ before running duels."
         )
     return entry.lane_id, str(king_root)
@@ -109,7 +109,7 @@ def promote_lane_king(
 
     plugin = plugin_for_evaluator(entry.evaluator_id)
     if plugin is not None:
-        # The lane's plugin persists any subnet-specific provenance (SN60: challenge
+        # The lane's plugin persists any subnet-specific provenance (e.g. challenge
         # state + benchmark snapshot + promotion record); the core stays subnet-blind.
         plugin.record_promotion_provenance(
             entry=entry,
