@@ -8,7 +8,7 @@ importing this module stays cheap and cycle-free.
 from __future__ import annotations
 
 from kata.packages.plugin import SubnetPlugin
-from kata.packages.registry import get_plugin_or_none, register_plugin
+from kata.packages.registry import all_plugins, get_plugin_or_none, register_plugin
 
 
 def load_builtin_plugins() -> None:
@@ -32,3 +32,18 @@ def plugin_for_evaluator(evaluator_id: str | None) -> SubnetPlugin | None:
         return None
     load_builtin_plugins()
     return get_plugin_or_none(evaluator_id)
+
+
+def plugin_for_pack(pack: str | None, mode: str) -> SubnetPlugin | None:
+    """Return the registered plugin whose ``(pack, mode)`` matches, or ``None``.
+
+    Resolves in-process from the plugin registry (no pack-registry file required), so a
+    lane's subnet-specific screening works wherever its plugin is importable.
+    """
+    if not pack:
+        return None
+    load_builtin_plugins()
+    for plugin in all_plugins():
+        if plugin.pack == pack and plugin.mode == mode:
+            return plugin
+    return None

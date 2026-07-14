@@ -17,7 +17,6 @@ from kata.screening_system.models import (
 from kata.screening_system.rules import (
     screen_bundle_python_sources,
     screen_bundle_static_policy,
-    screen_sn60_static_bundle,
     screen_submission_bundle_files,
 )
 from kata.screening_system.similarity import screen_current_king_copycat
@@ -32,22 +31,16 @@ def _plugin_static_screen_findings(
     submission_root: Path,
     repo_pack: str | None,
     mode: str,
-    public_root: Path | None,
 ) -> list:
     """Per-subnet static screening findings from the lane's plugin, if any.
 
-    Lazily imports the dispatch/registry to avoid import cycles. Returns an empty
-    list for lanes whose plugin adds no subnet-specific static checks (e.g. SN60).
+    Resolves the lane's plugin in-process by ``(pack, mode)`` and runs its
+    ``static_screen``. Lazily imported to avoid an import cycle. Returns an empty
+    list when the lane has no plugin or the plugin adds no static findings.
     """
-    if not repo_pack:
-        return []
-    from kata.packages.dispatch import plugin_for_evaluator
-    from kata.promotion_system import find_evaluator_pack_entry
+    from kata.packages.dispatch import plugin_for_pack
 
-    entry = find_evaluator_pack_entry(
-        repo_pack, mode, public_root=str(public_root) if public_root else None
-    )
-    plugin = plugin_for_evaluator(entry.evaluator_id) if entry is not None else None
+    plugin = plugin_for_pack(repo_pack, mode)
     if plugin is None:
         return []
     findings = plugin.static_screen(str(submission_root))
@@ -75,15 +68,13 @@ def screen_submission(
     reject_findings.extend(screen_submission_bundle_files(submission_root))
     reject_findings.extend(screen_bundle_python_sources(bundle_files))
     reject_findings.extend(screen_bundle_static_policy(bundle_files))
-    reject_findings.extend(screen_sn60_static_bundle(bundle_files))
-    # Per-subnet static checks are dispatched through the lane's plugin; the generic
-    # anti-cheat checks above run for every subnet.
+    # Subnet-specific static checks (e.g. SN60's benchmark-leak rules) run only for the
+    # lane's own plugin; the generic anti-cheat checks above run for every subnet.
     reject_findings.extend(
         _plugin_static_screen_findings(
             submission_root=submission_root,
             repo_pack=repo_pack,
             mode=mode,
-            public_root=public_root,
         )
     )
     review_findings, review_score = analyze_benchmark_replay(bundle_files)

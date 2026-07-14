@@ -173,6 +173,7 @@ def test_screen_submission_wraps_current_static_screening(tmp_path: Path) -> Non
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
     )
 
     assert decision.status == "reject"
@@ -180,6 +181,29 @@ def test_screen_submission_wraps_current_static_screening(tmp_path: Path) -> Non
     assert decision.rejection_messages() == validate_sn60_static_screening(bundle_root)
     assert {finding.rule_id for finding in decision.reject_reasons} == {
         "sn60.answer_key_token",
+    }
+
+
+def test_screen_submission_skips_sn60_static_for_non_sn60_lane(tmp_path: Path) -> None:
+    # The same bundle SN60 rejects for an answer-key token must NOT be screened by SN60's
+    # rules on a different lane -- subnet-specific static checks are lane-scoped.
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
+        "KNOWN = 'curated-highs-only'\n"
+        + VALID_AGENT_SOURCE,
+        helper_source="VALUE = 1\n",
+    )
+
+    decision = screen_submission(
+        submission_root=bundle_root,
+        public_root=None,
+        mode="miner",
+        repo_pack="other__subnet",
+    )
+
+    assert "sn60.answer_key_token" not in {
+        finding.rule_id for finding in decision.reject_reasons
     }
 
 

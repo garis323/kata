@@ -216,6 +216,18 @@ class Sn60BitsecPlugin(SubnetPlugin):
         decision = evaluate_sn60_promotion(king=king.payload, candidate=candidate.payload)
         return decision.promotion_ready
 
+    def static_screen(self, submission_path: str) -> list | None:
+        """SN60 subnet-specific static anti-cheat (benchmark-leak / forbidden tokens).
+
+        Loads the bundle and runs SN60's static rules. Lazy imports avoid a screening
+        module-load cycle. Returns findings, or None when the bundle is clean.
+        """
+        from kata.screening_system.rules import screen_sn60_static_bundle
+        from kata.submission_system.bundle import load_bundle_files
+
+        findings = screen_sn60_static_bundle(load_bundle_files(Path(submission_path)))
+        return findings or None
+
     def run_round(
         self,
         *,
