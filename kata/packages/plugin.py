@@ -188,6 +188,14 @@ class SubnetPlugin(ABC):
         """Extra subnet-specific reject reasons during verification. Default: none."""
         return []
 
+    def benchmark_review(self, bundle_files, *, strict):
+        """Subnet anti-memorization review of a candidate bundle.
+
+        Returns ``(reject_findings, review_findings, score)``. In ``strict`` mode the
+        subnet may promote concrete evidence from review to reject. Default: nothing.
+        """
+        return [], [], 0.0
+
     def run_round(
         self,
         *,

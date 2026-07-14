@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import replace
 from pathlib import Path
 
-from kata.screening_system.benchmark_replay import (
-    analyze_benchmark_replay,
-    is_concrete_replay_finding,
-)
 from kata.screening_system.llm_review import review_suspicious_submission_with_llm
 from kata.screening_system.models import (
     ScreeningDecision,
@@ -47,6 +42,27 @@ def _plugin_static_screen_findings(
     return list(findings) if findings else []
 
 
+def _plugin_benchmark_review(
+    *,
+    bundle_files: dict[str, str],
+    repo_pack: str | None,
+    mode: str,
+    strict: bool,
+) -> tuple[list, list, float]:
+    """Subnet anti-memorization (benchmark-replay) review from the lane's plugin.
+
+    Returns ``(reject_findings, review_findings, score)`` -- all empty for lanes with no
+    plugin or no benchmark review (e.g. non-SN60 subnets).
+    """
+    from kata.packages.dispatch import plugin_for_pack
+
+    plugin = plugin_for_pack(repo_pack, mode)
+    if plugin is None:
+        return [], [], 0.0
+    rejects, reviews, score = plugin.benchmark_review(bundle_files, strict=strict)
+    return list(rejects), list(reviews), score
+
+
 def screen_submission(
     *,
     submission_root: Path,
@@ -58,7 +74,8 @@ def screen_submission(
 ) -> ScreeningDecision:
     """Run the screening subsystem for a candidate submission.
 
-    Wraps the SN60 static screening checks in a structured decision object.
+    Generic anti-cheat runs for every lane; subnet-specific static and benchmark-replay
+    checks are dispatched through the lane's plugin.
     """
     if mode != "miner":
         return ScreeningDecision(status="pass")
@@ -77,7 +94,13 @@ def screen_submission(
             mode=mode,
         )
     )
-    review_findings, review_score = analyze_benchmark_replay(bundle_files)
+    bench_rejects, review_findings, review_score = _plugin_benchmark_review(
+        bundle_files=bundle_files,
+        repo_pack=repo_pack,
+        mode=mode,
+        strict=resolve_strict_replay(strict_replay),
+    )
+    reject_findings.extend(bench_rejects)
     copycat_rejects, copycat_reviews, copycat_score = screen_current_king_copycat(
         submission_root=submission_root,
         bundle_files=bundle_files,
@@ -89,14 +112,6 @@ def screen_submission(
     review_findings.extend(copycat_reviews)
     review_score += copycat_score
     notes: list[ScreeningFinding] = []
-    if resolve_strict_replay(strict_replay):
-        concrete_findings = [
-            finding for finding in review_findings if is_concrete_replay_finding(finding)
-        ]
-        reject_findings.extend(promote_replay_findings(concrete_findings))
-        review_findings = [
-            finding for finding in review_findings if not is_concrete_replay_finding(finding)
-        ]
     reject_findings = dedupe_findings(reject_findings)
     review_findings = dedupe_findings(review_findings)
     if reject_findings:
@@ -148,30 +163,3 @@ def resolve_review_mode(value: bool | None) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def promote_replay_findings(findings: list[ScreeningFinding]) -> list[ScreeningFinding]:
-    return [
-        replace(
-            finding,
-            severity="reject",
-            reason=render_replay_rejection_reason(finding),
-        )
-        for finding in findings
-    ]
-
-
-def render_replay_rejection_reason(finding: ScreeningFinding) -> str:
-    detail = finding.reason.strip()
-    if detail.startswith("SN60 screening found "):
-        detail = detail.removeprefix("SN60 screening found ").strip()
-    if detail.startswith("SN60 screening "):
-        detail = detail.removeprefix("SN60 screening ").strip()
-    if not detail:
-        detail = (
-            "concrete benchmark-specific replay evidence was found "
-            f"by `{finding.rule_id}`."
-        )
-    return (
-        "SN60 screening rejected hardcoded benchmark replay: "
-        f"{detail} Remove benchmark IDs, known finding IDs, copied finding "
-        "titles/answers, and any prewritten benchmark-specific reports."
-    )

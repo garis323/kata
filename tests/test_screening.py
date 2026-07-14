@@ -220,6 +220,7 @@ def test_screen_submission_reports_exact_benchmark_replay_signals(tmp_path: Path
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
     )
 
     assert decision.status == "pass"
@@ -246,6 +247,7 @@ def test_screen_submission_can_promote_replay_signals_to_review_status(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         enable_review=True,
     )
 
@@ -269,6 +271,7 @@ def test_screen_submission_rejects_replay_signals_in_strict_mode(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         strict_replay=True,
     )
 
@@ -306,6 +309,7 @@ def test_screen_submission_rejects_known_title_and_answer_text_in_strict_mode(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         strict_replay=True,
     )
 
@@ -367,6 +371,7 @@ def test_screen_submission_keeps_ambiguous_fingerprint_as_review_in_strict_mode(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         enable_review=True,
         strict_replay=True,
     )
@@ -435,6 +440,7 @@ def test_screen_submission_catches_case_folded_project_fingerprint(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         enable_review=True,
         strict_replay=True,
     )
@@ -500,6 +506,7 @@ def test_screen_submission_does_not_flag_common_identifiers_as_fingerprints(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         enable_review=True,
         strict_replay=True,
     )
@@ -568,6 +575,7 @@ def test_screen_submission_attaches_llm_review_for_review_findings(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         enable_review=True,
     )
 
@@ -594,6 +602,7 @@ def test_screen_submission_reviews_large_static_report_bank(tmp_path: Path) -> N
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         enable_review=True,
         strict_replay=True,
     )
@@ -619,6 +628,7 @@ def test_screen_submission_allows_generic_reusable_detector(tmp_path: Path) -> N
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
     )
 
     assert decision.status == "pass"
@@ -655,6 +665,7 @@ def test_screen_submission_reviews_factory_call_report_bank(tmp_path: Path) -> N
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         enable_review=True,
         strict_replay=True,
     )
@@ -700,6 +711,7 @@ def test_screen_submission_rejects_source_line_probe_bank_in_strict_mode(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         strict_replay=True,
     )
 
@@ -733,6 +745,7 @@ def test_screen_submission_allows_short_keyword_substring_probes(
         submission_root=bundle_root,
         public_root=None,
         mode="miner",
+        repo_pack="sn60__bitsec",
         strict_replay=True,
     )
 
