@@ -199,6 +199,25 @@ def evaluate_candidate_in_room(
     return CandidateOutcome(True, result.report, "ok")
 
 
+def _bundle_tar_b64(bundle_root: str) -> str:
+    """Tar+gzip+base64 the candidate's submission bundle so the room can run the real
+    agent. Excludes caches/VCS noise; the room extracts it to /kata_bundle."""
+    import base64
+    import io
+    import tarfile
+
+    def _keep(ti: "tarfile.TarInfo"):
+        n = ti.name
+        if "__pycache__" in n or n.endswith(".pyc") or "/.git" in n or n == "./.git":
+            return None
+        return ti
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        tf.add(bundle_root, arcname=".", filter=_keep)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
 class HttpRoomLauncher:
     """Drive ONE running room over HTTP, per candidate (sealed key travels per request)."""
 
@@ -211,7 +230,10 @@ class HttpRoomLauncher:
         nonce: bytes, sealed_key_ref: str,
     ) -> RoomResult:
         payload = json.dumps({
-            "nonce": nonce.hex(), "project_key": project_key, "sealed_key": sealed_key_ref,
+            "nonce": nonce.hex(),
+            "project_key": project_key,
+            "sealed_key": sealed_key_ref,
+            "bundle": _bundle_tar_b64(agent_ref),   # the miner's real agent, run in the room
         }).encode()
         req = urllib.request.Request(
             f"{self.base_url}/run", data=payload,
