@@ -11,7 +11,7 @@ from kata.evaluators.sn60_bitsec import (
     Sn60ReplicaResult,
     Sn60VariantSummary,
 )
-from kata.promotion_system import load_sn60_duel_summary
+from kata.packages.sn60.promotion import load_sn60_duel_summary
 from kata.state_system.lane import (
     load_benchmark_snapshot,
     load_challenge_state,

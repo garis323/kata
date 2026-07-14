@@ -228,6 +228,21 @@ class Sn60BitsecPlugin(SubnetPlugin):
         findings = screen_sn60_static_bundle(load_bundle_files(Path(submission_path)))
         return findings or None
 
+    def record_promotion_provenance(
+        self, *, entry, verification, summary, public_root: str | None = None
+    ) -> None:
+        from kata.packages.sn60.promotion import record_sn60_promotion_provenance
+
+        record_sn60_promotion_provenance(
+            entry=entry,
+            verification=verification,
+            summary=summary,
+            public_root=public_root,
+        )
+
+    def hash_bundle(self, path) -> str:
+        return hash_bundle_root(Path(path))
+
     def run_round(
         self,
         *,

@@ -9,12 +9,12 @@ from kata.evaluators.sn60_bitsec import (
     DEFAULT_REPLICAS_PER_PROJECT,
 )
 from kata.packages.dispatch import plugin_for_evaluator
+from kata.packages.sn60.promotion import (
+    load_sn60_duel_summary as load_sn60_duel_summary,
+)
 from kata.promotion_system import LanePromotionResult
 from kata.promotion_system import (
     find_evaluator_pack_entry as find_evaluator_pack_entry,
-)
-from kata.promotion_system import (
-    load_sn60_duel_summary as load_sn60_duel_summary,
 )
 from kata.promotion_system import (
     promote_lane_king as promote_lane_king,

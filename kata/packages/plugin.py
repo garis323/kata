@@ -154,6 +154,29 @@ class SubnetPlugin(ABC):
         """Optional subnet-specific static checks before running. Default: no extra checks."""
         return None
 
+    def record_promotion_provenance(
+        self, *, entry, verification, summary, public_root: str | None = None
+    ) -> None:
+        """Persist any subnet-specific promotion/provenance records for a promoted winner.
+
+        The generic promotion path calls this after a challenger wins; the plugin writes
+        whatever lane provenance it needs (challenge state, benchmark snapshot, …).
+        Default: nothing.
+        """
+        return None
+
+    def hash_bundle(self, path) -> str:
+        """Hash a king/candidate bundle for king-currency checks.
+
+        Must match how the subnet hashes bundles during a round so a published king stays
+        recognized as current. Default: the generic submission-bundle hash.
+        """
+        from pathlib import Path
+
+        from kata.screening_system.rules import hash_submission_bundle
+
+        return hash_submission_bundle(Path(path))
+
     def run_round(
         self,
         *,
