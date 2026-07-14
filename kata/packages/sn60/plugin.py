@@ -262,6 +262,26 @@ class Sn60BitsecPlugin(SubnetPlugin):
 
         return sn60_benchmark_review(bundle_files, strict=strict)
 
+    def add_round_arguments(self, parser) -> None:
+        from kata.packages.sn60.cli import sn60_add_round_arguments
+
+        sn60_add_round_arguments(parser)
+
+    def build_round_config(self, args) -> dict:
+        from kata.packages.sn60.cli import sn60_build_round_config
+
+        return sn60_build_round_config(args)
+
+    def round_result_json(self, result) -> dict:
+        from kata.packages.sn60.cli import sn60_round_result_json
+
+        return sn60_round_result_json(result)
+
+    def render_round_text(self, result) -> str:
+        from kata.packages.sn60.cli import sn60_render_round_text
+
+        return sn60_render_round_text(result)
+
     def run_round(
         self,
         *,

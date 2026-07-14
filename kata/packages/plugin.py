@@ -196,6 +196,21 @@ class SubnetPlugin(ABC):
         """
         return [], [], 0.0
 
+    def add_round_arguments(self, parser) -> None:
+        """Register this subnet's ``kata round`` CLI arguments. Default: none."""
+
+    def build_round_config(self, args) -> dict:
+        """Build the round config dict from parsed CLI args. Default: empty."""
+        return {}
+
+    def round_result_json(self, result) -> dict:
+        """Serialize a round result to the CLI JSON payload. Default: empty."""
+        return {}
+
+    def render_round_text(self, result) -> str:
+        """Render a round result as human-readable text. Default: repr."""
+        return str(result)
+
     def run_round(
         self,
         *,

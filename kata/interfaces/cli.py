@@ -395,16 +395,6 @@ def _add_round_parser(subparsers) -> None:
         help="A competing candidate as '<submission-id>=<artifact-path>'. Repeat per entrant.",
     )
     round_cmd.add_argument(
-        "--sn60-project-key",
-        action="append",
-        default=None,
-        help=(
-            "SN60 project key to score every entrant on. Repeat per project. When "
-            "omitted, the round secretly samples this round's problems from the "
-            "benchmark (KATA_SN60_PROJECT_SAMPLE_SIZE / _SECRET)."
-        ),
-    )
-    round_cmd.add_argument(
         "--king-scoreboard",
         default=None,
         help="Optional path to the persistent per-project king score cache.",
@@ -427,15 +417,19 @@ def _add_round_parser(subparsers) -> None:
         default=None,
         help="Optional path to publish a live per-candidate progress snapshot for the dashboard.",
     )
-    round_cmd.add_argument("--sn60-replicas-per-project", type=int, default=None)
-    round_cmd.add_argument("--sn60-sandbox-root", default=None)
-    round_cmd.add_argument("--sn60-benchmark-file", default=None)
-    round_cmd.add_argument("--sn60-sandbox-commit", default=None)
     round_cmd.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
     )
+    # Each registered subnet plugin contributes its own namespaced round arguments
+    # (e.g. SN60's --sn60-* flags); the core round handler stays subnet-blind.
+    from kata.packages.dispatch import load_builtin_plugins
+    from kata.packages.registry import all_plugins
+
+    load_builtin_plugins()
+    for plugin in all_plugins():
+        plugin.add_round_arguments(round_cmd)
     round_cmd.set_defaults(handler=handle_round)
 
 
@@ -590,59 +584,24 @@ def handle_round(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"No subnet plugin is registered for evaluator '{args.evaluator}'."
         )
-    # Subnet-namespaced flags map to the plugin's problem-sampling config; the plugin
-    # resolves/samples the actual problem set.
-    config = {
-        "sandbox_root": args.sn60_sandbox_root,
-        "benchmark_file": args.sn60_benchmark_file,
-        "sandbox_commit": args.sn60_sandbox_commit,
-        "project_keys": args.sn60_project_key or None,
-        "replicas_per_project": args.sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
-    }
     result = plugin.run_round(
         king_agent_path=args.king_path,
         candidates=candidates,
-        config=config,
+        config=plugin.build_round_config(args),
         output_root=args.output_root or "runs",
         score_king=not args.candidate_only,
         progress_path=args.round_progress_path,
     )
-    runs_per_project = result.replicas_per_project
     if args.json:
-        print_json(
-            {
-                "run_id": result.run_id,
-                "round_summary_path": str(
-                    (Path(result.output_root) / "round_summary.json").resolve()
-                ),
-                "winner_submission_id": result.winner_submission_id,
-                "winner_challenge_summary_path": result.winner_challenge_summary_path,
-                "promotion_ready": result.promotion_ready,
-                "promotion_reason": result.promotion_reason,
-                "competition_mode": result.competition_mode,
-                "king_skipped_reason": result.king_skipped_reason,
-                "validator_replica_count": 1,
-                "runs_per_project": runs_per_project,
-                "project_pass_threshold": project_pass_threshold_label(runs_per_project),
-                "king": _sn60_variant_detail(result.king) if result.king else None,
-                "entries": [
-                    {
-                        "submission_id": entry.submission_id,
-                        "beats_king": entry.beats_king,
-                        "selected_winner": entry.selected_winner,
-                        "duel_run_id": entry.duel_run_id,
-                        **_sn60_variant_detail(entry.candidate),
-                    }
-                    for entry in result.entries
-                ],
-            }
-        )
+        print_json(plugin.round_result_json(result))
     else:
-        print(render_round_result(result))
+        print(plugin.render_round_text(result))
     return 0
 
 
 def handle_sn60_baseline(args: argparse.Namespace) -> int:
+    from kata.packages.sn60.cli import sn60_variant_detail
+
     submission_id, artifact_path = parse_round_candidate(args.candidate)
     result = run_sn60_baseline_only(
         submission_id=submission_id,
@@ -681,7 +640,7 @@ def handle_sn60_baseline(args: argparse.Namespace) -> int:
                         "beats_king": None,
                         "selected_winner": False,
                         "duel_run_id": result.run_id,
-                        **_sn60_variant_detail(result.baseline),
+                        **sn60_variant_detail(result.baseline),
                     }
                 ],
             }
@@ -689,73 +648,6 @@ def handle_sn60_baseline(args: argparse.Namespace) -> int:
     else:
         print(render_sn60_baseline_result(result))
     return 0
-
-
-def _sn60_variant_detail(variant) -> dict:  # type: ignore[no-untyped-def]
-    """Serialize a variant summary (king or candidate) with its per-project
-    breakdown so the dashboard can render a detailed per-PR duel view."""
-    return {
-        "aggregated_score": variant.aggregated_score,
-        "detection_score": variant.aggregated_score,
-        "sn60_pass_score": sn60_pass_score(variant),
-        "average_detection_rate": variant.average_detection_rate,
-        "true_positives": variant.true_positives,
-        "total_expected": variant.total_expected,
-        "total_found": variant.total_found,
-        "precision": variant.precision,
-        "f1_score": variant.f1_score,
-        "invalid_runs": variant.invalid_runs,
-        "codebase_pass_count": variant.codebase_pass_count,
-        "projects": [
-            {
-                "project_key": project.project_key,
-                "passed": project.passed,
-                "detection_rate": project.average_detection_rate,
-                "true_positives": project.true_positives,
-                "total_expected": project.total_expected,
-                "total_found": project.total_found,
-                "precision": project.precision,
-                "f1_score": project.f1_score,
-            }
-            for project in variant.project_summaries
-        ],
-    }
-
-
-def render_round_result(result) -> str:  # type: ignore[no-untyped-def]
-    lines = [f"SN60 round {result.run_id}"]
-    competition_mode = result.competition_mode
-    if competition_mode == "candidate_only":
-        lines.append("mode: candidate-only recovery")
-        lines.append("king evaluated: no")
-        king_skipped_reason = result.king_skipped_reason
-        if king_skipped_reason:
-            lines.append(f"reason: {king_skipped_reason}")
-    elif result.king is not None:
-        lines.append(
-            f"king pass score {sn60_pass_score(result.king):.3f} "
-            f"({result.king.codebase_pass_count}/{len(result.king.project_summaries)} projects, "
-            f"detection {result.king.aggregated_score:.3f}, "
-            f"tp {result.king.true_positives}/{result.king.total_expected})"
-        )
-    lines.append("ranking (best first):")
-    for position, entry in enumerate(result.entries, start=1):
-        if entry.submission_id == result.winner_submission_id:
-            marker = "WINNER"
-        elif entry.beats_king:
-            marker = "beats-king"
-        else:
-            marker = "-"
-        lines.append(
-            f"  {position}. {entry.submission_id} "
-            f"pass {sn60_pass_score(entry.candidate):.3f} "
-            f"({entry.candidate.codebase_pass_count}/"
-            f"{len(entry.candidate.project_summaries)} projects, "
-            f"detection {entry.candidate.aggregated_score:.3f}, "
-            f"tp {entry.candidate.true_positives}) {marker}"
-        )
-    lines.append(result.promotion_reason)
-    return "\n".join(lines)
 
 
 def render_sn60_baseline_result(result) -> str:  # type: ignore[no-untyped-def]
