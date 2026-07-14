@@ -19,7 +19,7 @@ from kata.packages.sn60.sn60_bitsec import (
     hash_bundle_root,
     stage_bundle,
 )
-from kata.screening_system.rules import validate_sn60_static_screening
+from kata.packages.sn60.static_screening import validate_sn60_static_screening
 from kata.util import dedupe, write_json
 
 SN60_SCREENING_SCHEMA_VERSION = 1

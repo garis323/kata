@@ -222,7 +222,7 @@ class Sn60BitsecPlugin(SubnetPlugin):
         Loads the bundle and runs SN60's static rules. Lazy imports avoid a screening
         module-load cycle. Returns findings, or None when the bundle is clean.
         """
-        from kata.screening_system.rules import screen_sn60_static_bundle
+        from kata.packages.sn60.static_screening import screen_sn60_static_bundle
         from kata.submission_system.bundle import load_bundle_files
 
         findings = screen_sn60_static_bundle(load_bundle_files(Path(submission_path)))
