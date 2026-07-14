@@ -86,13 +86,3 @@ def test_static_screen_noop_for_unknown_or_missing_lane(tmp_path: Path) -> None:
         )
         == []
     )
-
-
-def test_sn60_lane_runs_its_static_screen(tmp_path: Path) -> None:
-    # Phase 2a: SN60's static rules run via its plugin for the SN60 lane. A bundle with an
-    # answer-key token is rejected by SN60's own static_screen through the dispatch.
-    (tmp_path / "agent.py").write_text("KNOWN = 'curated-highs-only'\n", encoding="utf-8")
-    findings = _plugin_static_screen_findings(
-        submission_root=tmp_path, repo_pack="sn60__bitsec", mode="miner"
-    )
-    assert any(getattr(f, "rule_id", None) == "sn60.answer_key_token" for f in findings)

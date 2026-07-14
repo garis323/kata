@@ -8,10 +8,7 @@ license = "MIT"
 authors = [
   { name = "Kata maintainers" }
 ]
-dependencies = [
-  # TDX quote verification for sealed-room (TEE) SN60 execution (KATA_SN60_USE_TEE_ROOM).
-  "dcap-qvl>=0.5",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -21,13 +18,12 @@ dev = [
 
 [project.scripts]
 kata = "kata.interfaces.cli:main"
-kata-sn60-model-relay = "kata.packages.sn60.validator_system.model_relay:main"
 
-# Subnet plugins are discovered via this entry-point group. A subnet package (in-repo today,
-# its own repo tomorrow) declares one entry pointing at its SubnetPlugin singleton; the core
-# loads every installed one with no code change. See kata/packages/dispatch.py.
+# Subnet plugins are discovered via this entry-point group: each subnet package (its own repo,
+# e.g. kata-sn60) declares one entry pointing at its SubnetPlugin singleton, and the core loads
+# every installed one with no code change. See kata/packages/dispatch.py. (sn22 is still an
+# in-repo stub pending its own repo extraction.)
 [project.entry-points."kata.subnets"]
-sn60 = "kata.packages.sn60:SN60_BITSEC_PLUGIN"
 sn22 = "kata.packages.sn22:SN22_DESEARCH_PLUGIN"
 
 [build-system]
