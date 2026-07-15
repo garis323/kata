@@ -12,6 +12,7 @@ AGENT_MANIFEST_FILENAME = "agent_manifest.json"
 # The miner's inference key, sealed to the room (sealed-room / TEE execution). Ciphertext,
 # only openable inside the attested room -- safe to carry in the public submission bundle.
 SEALED_KEY_FILENAME = "sealed_inference_key"
+SUBMISSION_METADATA_FILENAME = "submission.json"
 HELPERS_DIRNAME = "helpers"
 AGENT_MANIFEST_SCHEMA_VERSION = 1
 DEFAULT_AGENT_RUNTIME = "python"
@@ -100,6 +101,33 @@ def collect_bundle_relative_paths(root: Path) -> list[str]:
     return relative_paths
 
 
+def collect_staged_bundle_relative_paths(root: Path) -> list[str]:
+    """Return the exact submitted files that execution staging preserves.
+
+    ``submission.json`` is metadata rather than executable source, so callers
+    that load an agent for validation deliberately omit it. A sealed TEE
+    credential, however, is bound before Kata stages the submission. Preserve
+    the metadata alongside the executable bundle so the staged bytes are the
+    same bytes the miner sealed. This also makes the helper suitable for any
+    executor that needs a faithful, bounded submission copy.
+    """
+
+    relative_paths: list[str] = []
+    for file_path in sorted(root.rglob("*")):
+        if file_path.is_symlink() or not file_path.is_file():
+            continue
+        relative = file_path.relative_to(root)
+        if should_ignore_bundle_path(relative):
+            continue
+        relative_path = relative.as_posix()
+        if (
+            relative_path == SUBMISSION_METADATA_FILENAME
+            or is_allowed_bundle_relative_path(relative_path)
+        ):
+            relative_paths.append(relative_path)
+    return relative_paths
+
+
 def find_unexpected_bundle_paths(root: Path) -> list[str]:
     unexpected: list[str] = []
     for file_path in sorted(root.rglob("*")):
@@ -136,6 +164,30 @@ def write_bundle_files(root: Path, files: dict[str, str]) -> None:
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content.rstrip() + "\n", encoding="utf-8")
+
+
+def stage_submission_bundle(source_root: Path, destination_root: Path) -> list[str]:
+    """Copy execution-stage submission files without changing their bytes.
+
+    Normalized bundle writes are useful for public king artifacts, but changing
+    submitted source after a miner seals a TEE credential changes its binding.
+    Execution staging copies the allowed agent files and ``submission.json``
+    byte-for-byte. The sealed credential itself is staged but excluded from the
+    room's binding hash.
+    """
+
+    relative_paths = collect_staged_bundle_relative_paths(source_root)
+    if not relative_paths:
+        raise ValueError(f"Submission bundle is empty: {source_root}")
+    if destination_root.exists():
+        shutil.rmtree(destination_root)
+    destination_root.mkdir(parents=True, exist_ok=True)
+    for relative_path in relative_paths:
+        source = source_root / relative_path
+        destination = destination_root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+    return relative_paths
 
 
 def replace_bundle_contents(destination_root: Path, files: dict[str, str]) -> None:

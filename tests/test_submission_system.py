@@ -20,6 +20,43 @@ from kata.submissions.validation import (
 )
 
 
+def test_stage_submission_bundle_preserves_metadata_and_source_bytes(tmp_path: Path) -> None:
+    from kata.submissions.bundle import stage_submission_bundle
+
+    source = tmp_path / "source"
+    source.mkdir()
+    agent = b"def agent_main(): pass  \n\n"
+    metadata = b'{"submission_id":"alice-20260708-01"}'
+    sealed_key = b"public-ciphertext"
+    helper = b"def inspect(): return 1\n"
+    (source / "agent.py").write_bytes(agent)
+    (source / "agent_manifest.json").write_bytes(b'{"schema_version":1}\n')
+    (source / "submission.json").write_bytes(metadata)
+    (source / "sealed_inference_key").write_bytes(sealed_key)
+    helpers = source / "helpers"
+    helpers.mkdir()
+    (helpers / "scan.py").write_bytes(helper)
+    cache = source / "__pycache__"
+    cache.mkdir()
+    (cache / "agent.pyc").write_bytes(b"ignored")
+
+    destination = tmp_path / "staged"
+    copied = stage_submission_bundle(source, destination)
+
+    assert copied == [
+        "agent.py",
+        "agent_manifest.json",
+        "helpers/scan.py",
+        "sealed_inference_key",
+        "submission.json",
+    ]
+    assert (destination / "agent.py").read_bytes() == agent
+    assert (destination / "submission.json").read_bytes() == metadata
+    assert (destination / "sealed_inference_key").read_bytes() == sealed_key
+    assert (destination / "helpers/scan.py").read_bytes() == helper
+    assert not (destination / "__pycache__").exists()
+
+
 def test_submission_metadata_round_trips_subnet_pack_field(tmp_path: Path) -> None:
     metadata_path = tmp_path / "submission.json"
     metadata = SubmissionMetadata(
