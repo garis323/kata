@@ -12,15 +12,15 @@
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg?style=for-the-badge" alt="Python 3.12+">
 </p>
 
-## Built on Gittensor (Bittensor SN74)
+## ⚡ Built on Gittensor (Bittensor SN74)
 
-Kata's development runs on **Gittensor**, the open-source-software subnet on Bittensor (SN74). Gittensor coordinates the people who improve this repository and rewards their merged work.
+Kata's development runs on **Gittensor** 🌐, the open-source-software subnet on Bittensor (SN74). Gittensor coordinates the people who improve this repository and rewards their merged work.
 
 The reward loop is the whole reason to compete here:
 
-1. **Improve an agent** and open a pull request.
-2. **Win a round** — beat the reigning king on the benchmark and get promoted.
-3. **Earn on-chain** — Gittensor rewards the promotion. A fresh king carries the most weight, and it decays over time, so staying on top means staying the best.
+1. 🛠️ **Improve an agent** and open a pull request.
+2. 🏆 **Win a round** — beat the reigning king on the benchmark and get promoted.
+3. 💰 **Earn on-chain** — Gittensor rewards the promotion. A fresh 👑 king carries the most weight, and it decays over time, so staying on top means staying the best.
 
 You don't need to run Bittensor or join a Discord to take part. SN74 funds work on *this* repo, which is separate from the subnets Kata builds agents *for* (the targets below).
 
@@ -36,34 +36,37 @@ The point is objectivity. A challenger wins by beating the king on a fixed bench
 
 ```mermaid
 flowchart TD
-    C["Contributor<br/>opens a PR — one agent under submissions/"]
+    C["Contributor opens a PR<br/>one agent under submissions/"]
     BOT["kata-bot<br/>GitHub automation"]
-    IN["Intake<br/>screen → pending / review / invalid"]
-    RD["Round<br/>scheduled · lock pending · mark executing"]
-    ENG["kata engine<br/>score the king vs the candidates"]
-    subgraph PLUGINS["subnet plugins — one engine, many subnets (kata.subnets)"]
-        SN60["kata-sn60 · Bitsec"]
-        SN22["kata-sn22 · Desearch"]
-        MORE["+ more targets"]
-    end
-    TEE["kata-tee-runner<br/>sealed room · miner-paid inference"]
-    PROM["Promote<br/>top agent beats the king → new king in kings/"]
+    IN["1 · Intake<br/>screen → pending / review / invalid"]
+    RD["2 · Round<br/>scheduled · score the pending agents"]
+    PROM["4 · Promote<br/>winner → new king in kings/"]
     BOARD["kata-board<br/>dashboard"]
 
-    C -->|webhook| BOT
-    BOT -->|at intake| IN
-    BOT -->|on a schedule| RD
-    IN -.->|pending agents enter| RD
-    RD --> ENG
-    ENG -->|loads a subnet plugin| SN60
-    ENG --> SN22
-    ENG --> MORE
-    SN60 -->|run agents| TEE
-    SN22 --> TEE
-    MORE --> TEE
-    TEE -->|ranked scores| PROM
-    PROM -->|becomes the next bar| RD
-    PROM -->|reads king + live round| BOARD
+    subgraph SCORE["3 · Scoring a round · one engine, many subnets"]
+        direction LR
+        ENG["kata engine<br/>king vs candidates"]
+        PLG["subnet plugin<br/>SN60 · SN22 · +more"]
+        TEE["kata-tee-runner<br/>sealed room · miner-paid"]
+        ENG -->|loads| PLG
+        PLG -->|runs agents| TEE
+        TEE -->|scores| ENG
+    end
+
+    C e1@--> BOT
+    BOT e2@--> IN
+    IN e3@--> RD
+    RD e4@--> ENG
+    ENG e5@-->|top agent beats the king| PROM
+    PROM e6@--> BOARD
+    PROM -. becomes the next bar .-> RD
+
+    e1@{ animate: true }
+    e2@{ animate: true }
+    e3@{ animate: true }
+    e4@{ animate: true }
+    e5@{ animate: true }
+    e6@{ animate: true }
 ```
 
 One engine drives every subnet. The core in this repo is subnet-neutral: it runs the competition, and a per-subnet plugin fills in the task, the benchmark, and the scoring. Adding a subnet is a new plugin, not a core change.
