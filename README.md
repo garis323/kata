@@ -14,13 +14,15 @@
 
 ## Built on Gittensor (Bittensor SN74)
 
-Kata's development runs on **Gittensor**, the open-source-software subnet on Bittensor (SN74). Gittensor coordinates the people who improve this repository and rewards their merged work.
+<p align="center">
+  <img src="assets/gittensor.svg" alt="Gittensor, Bittensor Subnet 74. Win a round, become the king, and earn on-chain." width="100%">
+</p>
 
-That reward loop is the reason to compete here:
+Kata's development runs on **Gittensor**, the open-source-software subnet on Bittensor (SN74). Gittensor coordinates the people who improve this repository and rewards their merged work. That reward loop is the whole reason to compete here:
 
-1. You open a pull request that improves an agent.
-2. If it wins a round and is promoted to king, that promotion is a recognized result.
-3. Gittensor pays out for it. A freshly promoted king carries the most reward weight, and it decays over time, so staying on top means staying the best.
+1. **Improve an agent** and open a pull request.
+2. **Win a round** — beat the reigning king on the benchmark and get promoted.
+3. **Earn on-chain** — Gittensor rewards the promotion. A fresh king carries the most weight, and it decays over time, so staying on top means staying the best.
 
 You don't need to run Bittensor or join a Discord to take part. SN74 funds work on *this* repo, which is separate from the subnets Kata builds agents *for* (the targets below).
 
@@ -35,7 +37,7 @@ The point is objectivity. A challenger wins by beating the king on a fixed bench
 ## How Kata works
 
 <p align="center">
-  <img src="assets/kata-system.svg" alt="The Kata system: contributors open pull requests; kata-bot screens them and runs scheduled rounds; the subnet-neutral kata engine scores the king against the candidates; per-subnet plugins (SN60 Bitsec, SN22 Desearch, and more) each promote their own king; agents run in the kata-tee-runner sealed room with miner-paid inference; and kata-board shows the king and the live round." width="100%">
+  <img src="assets/kata-system.svg" alt="The Kata workflow: (1) you open a pull request adding one agent; (2) kata-bot screens it and labels it pending; (3) on a schedule kata-bot runs a round; (4) the kata engine scores the king against the candidates; (5) kata-bot merges and promotes the winner as the new king, which becomes the bar to beat next round. Inside a round the engine loads a per-subnet plugin (SN60, SN22, and more) and runs the king and candidates in the kata-tee-runner sealed room with miner-paid inference. kata-board shows the king, the live round, and past winners." width="100%">
 </p>
 
 One engine drives every subnet. The core in this repo is subnet-neutral: it runs the competition, and a per-subnet plugin fills in the task, the benchmark, and the scoring. Adding a subnet is a new plugin, not a core change.
@@ -83,13 +85,13 @@ kata/
 
 ## How to submit an agent
 
-You only ever edit `submissions/`. Each contributor may have one open PR at a time.
+You only ever edit `submissions/`. Each contributor may have one open PR at a time. Pick a target pack from [Targets](#targets) above and use it as `<subnet-pack>` below.
 
 **1. Scaffold the bundle.**
 
 ```bash
 uv run kata submission init \
-  --subnet-pack sn60__bitsec --mode miner \
+  --subnet-pack <subnet-pack> --mode miner \
   --submission-id <your-github-username>-20260716-01 \
   --author <your-github-username>
 ```
@@ -97,36 +99,35 @@ uv run kata submission init \
 The submission id must be `<github-username>-YYYYMMDD-NN`, and the username must be the GitHub account that opens the PR. This writes:
 
 ```text
-submissions/sn60__bitsec/miner/<submission-id>/
-  agent.py            # your entrypoint: def agent_main(...) -> {"vulnerabilities": [...]}
+submissions/<subnet-pack>/miner/<submission-id>/
+  agent.py            # your entrypoint: def agent_main(...) -> dict
   agent_manifest.json # runtime contract (schema_version, runtime, entrypoint)
   submission.json     # target pack, mode, author, submission id
 ```
 
-**2. Write the agent.** `agent_main()` must be a synchronous function that runs with no arguments, reads the project it is given, and returns a dict with a top-level `vulnerabilities` list. Build an agent that analyzes the code it receives. A no-op stub, a constant canned report, or replayed benchmark answers are rejected at screening.
+**2. Write the agent.** `agent_main()` must be a synchronous function that runs with no arguments, reads the input it is given, and returns a JSON-serializable dict. The exact report shape is defined by the target, so check its repo. Build an agent that analyzes the input it receives; a no-op stub, a constant canned report, or replayed benchmark answers are rejected at screening.
 
-**3. Seal your inference key (targets that run miner-paid inference, such as SN60).** On these targets your agent pays for its own model calls, and you never hand a raw API key to the platform. You encrypt a provider credential to the target's sealed execution room and commit only the ciphertext:
+**3. Seal your inference key (only if the target runs miner-paid inference).** Some targets run your agent inside a sealed room and have it pay for its own model calls. For those you never hand a raw API key to the platform: you encrypt a provider credential to the room and commit only the ciphertext. The target documents its room URL, the providers it accepts, and its measurement; the sealing tool lives in [kata-tee-runner](https://github.com/Autovara/kata-tee-runner):
 
 ```bash
-# from kata-tee-runner, after checking the room's attestation
 python kata_seal.py \
   --room https://<approved-room-url> \
-  --provider <openrouter|chutes|akashml> \
+  --provider <provider-id> \
   --key <your-provider-api-key> \
-  --bundle submissions/sn60__bitsec/miner/<submission-id> \
+  --bundle submissions/<subnet-pack>/miner/<submission-id> \
   --measurement <approved-room-measurement>
 ```
 
-This writes a `sealed_inference_key` file into your bundle. Add it to the PR. The maintainer and validators only ever see ciphertext; your key is decrypted inside the attested room and used only to run your own agent. The exact room URL, approved providers, and measurement are in [kata-sn60](https://github.com/Autovara/kata-sn60); the sealing tool and how attestation works are in [kata-tee-runner](https://github.com/Autovara/kata-tee-runner).
+This writes a `sealed_inference_key` file into your bundle; add it to the PR. The maintainer and validators only ever see ciphertext; your key is decrypted inside the attested room and used only to run your own agent.
 
 **4. Validate and open the PR.**
 
 ```bash
 uv run kata submission validate \
-  --path submissions/sn60__bitsec/miner/<submission-id>
+  --path submissions/<subnet-pack>/miner/<submission-id>
 ```
 
-Commit only that submission directory, push a branch, and open one PR against the default branch. If the CLI says the `sn60__bitsec/miner` target is not registered, run the command from the top-level Kata repo with `KATA_ROOT="$(pwd)"`.
+Commit only that submission directory, push a branch, and open one PR against the default branch. If the CLI says the target is not registered, run the command from the top-level Kata repo with `KATA_ROOT="$(pwd)"`.
 
 ## PR labels
 
