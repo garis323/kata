@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "candidate_submission_id": "bohdansolovie-20260717-01",
-  "candidate_artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
-  "king_artifact_hash": "b55947053af017dc42e7bf4a64c4db2b7ecfa5f123de4db24233536d4f65b9cf",
+  "candidate_submission_id": "Dexterity104-20260717-01",
+  "candidate_artifact_hash": "ba6c31eab2c4f0f1d00889152663037d65bbc632a570e38336905ef503ed47e8",
+  "king_artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
   "screening_result": {
     "schema_version": 1,
-    "run_id": "candidate-only-73b0d6148b8d",
+    "run_id": "sn60-round-20260719T025046Z-6bc66b-pr-160",
     "status": "passed",
     "stage": "round",
-    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-cvzixw0z/kata-bot-kata-default-k4y0i3dk/submissions/sn60__bitsec/miner/bohdansolovie-20260717-01",
-    "artifact_hash": "73b0d6148b8db57ca62171bdb65bf492dcb4770f58b7a646c67cfc54da6a9e9c",
+    "artifact_path": "/srv/kata-bot/work/kata-bot-promote-tesqdwed/kata-bot-kata-default-bh2s_f9j/submissions/sn60__bitsec/miner/Dexterity104-20260717-01",
+    "artifact_hash": "ba6c31eab2c4f0f1d00889152663037d65bbc632a570e38336905ef503ed47e8",
     "project_key": null,
     "report_path": null,
     "result_path": null,
@@ -24,21 +24,21 @@
       "sandbox_commit": "069ae1e2f152370fa97f3397d8a8f8aed5a78539",
       "scorer_version": "ScaBenchScorerV2"
     },
-    "created_at": "2026-07-18T00:03:23.256524+00:00"
+    "created_at": "2026-07-19T03:56:56.262350+00:00"
   },
   "selected_project_keys": [
     "code4rena_loopfi_2025_02",
+    "sherlock_oku_2024_12",
+    "code4rena_kinetiq_2025_07",
+    "code4rena_starknet-perpetual_2025_06",
     "code4rena_virtuals-protocol_2025_08",
-    "code4rena_bakerfi-invitational_2025_02",
-    "sherlock_symmio_2025_03",
-    "cantina_generic-money_2025_11",
-    "cantina_minimal-delegation_2025_04",
+    "code4rena_forte-float128-solidity-library_2025_04",
     "code4rena_pump-science_2025_02"
   ],
   "validator_replica_count": 1,
   "run_ids": [
-    "sn60-round-20260717T231206Z-9cd331-pr-156"
+    "sn60-round-20260719T025046Z-6bc66b-pr-160"
   ],
-  "freshness_fingerprint": "a37ab503eb55cfa60e18aabd7fd81b5279ad54b1364b1f4b01b842e7de03c648",
-  "updated_at": "2026-07-18T09:58:53.792095+00:00"
+  "freshness_fingerprint": "f7f97d4c81348a30c841f05c4a290804dfc9e31e75b2e59c4fc292709d3969dc",
+  "updated_at": "2026-07-19T13:59:55.518830+00:00"
 }
