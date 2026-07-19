@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -89,15 +90,21 @@ def resolve_lane_king_hash(
     repo_pack: str,
     mode: str,
     public_root: str | None = None,
+    artifact_hasher: Callable[[Path], str] = hash_submission_bundle,
 ) -> str | None:
-    """Resolve the current king artifact hash for a registry-backed lane."""
+    """Resolve the current king artifact hash for a registry-backed lane.
+
+    ``artifact_hasher`` must be the LANE's bundle hasher (``plugin.hash_bundle``) so
+    the fallback branch matches the hash the king was published with; the generic
+    default only applies when no plugin is available.
+    """
     if lane_king_state_path(lane_id, public_root=public_root).exists():
         king = load_lane_king_state(lane_id, public_root=public_root)
         if king.current_king_artifact_hash:
             return king.current_king_artifact_hash
     king_root = resolve_public_king_root(public_root=public_root, repo_pack=repo_pack, mode=mode)
     if (king_root / SUBMISSION_AGENT_FILENAME).exists():
-        return hash_submission_bundle(king_root)
+        return artifact_hasher(king_root)
     return None
 
 

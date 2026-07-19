@@ -7,6 +7,7 @@ from kata.screening.python_ast import (
     python_source_similarity,
     python_sources_equivalent,
 )
+from kata.plugins.discovery import plugin_for_evaluator
 from kata.screening.rules import hash_submission_bundle
 from kata.state.artifacts import resolve_public_king_root
 from kata.state.lanes import (
@@ -90,6 +91,26 @@ def screen_current_king_copycat(
     return reject_findings, review_findings, 0
 
 
+def _lane_bundle_hasher(lane_id: str, *, public_root: str | None = None):
+    """The lane plugin's bundle hasher (``plugin.hash_bundle``), or the generic one.
+
+    The king's recorded hash is produced by ``plugin.hash_bundle``; a subnet may
+    override it (SN60 does), so the exact-copy comparison must hash the candidate
+    with the same hasher or an identical bundle clone would never match.
+    """
+    try:
+        registry = load_pack_registry(public_root=public_root)
+    except Exception:  # noqa: BLE001 - a missing/corrupt registry falls back to generic
+        return hash_submission_bundle
+    for pack in registry.packs:
+        if pack.lane_id == lane_id:
+            plugin = plugin_for_evaluator(pack.evaluator_id)
+            if plugin is not None:
+                return plugin.hash_bundle
+            break
+    return hash_submission_bundle
+
+
 def screen_exact_bundle_copy(
     *,
     lane_id: str,
@@ -101,7 +122,7 @@ def screen_exact_bundle_copy(
     king = load_lane_king_state(lane_id, public_root=public_root)
     if king.current_king_artifact_hash is None:
         return None
-    candidate_hash = hash_submission_bundle(submission_root)
+    candidate_hash = _lane_bundle_hasher(lane_id, public_root=public_root)(submission_root)
     if candidate_hash != king.current_king_artifact_hash:
         return None
     return ScreeningFinding(

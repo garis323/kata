@@ -20,7 +20,6 @@ from kata.promotion import (
 )
 from kata.screening.rules import (
     find_bundle_symlink_paths,
-    hash_submission_bundle,
 )
 from kata.submissions.bundle import (
     validate_agent_manifest,
@@ -344,7 +343,6 @@ def verify_submission_result(
             + "; ".join(validation.reasons or ["unknown validation failure"])
         )
 
-    candidate_hash = hash_submission_bundle(Path(validation.submission_path))
     evaluator_entry = find_evaluator_pack_entry(
         validation.metadata.repo_pack,
         validation.metadata.mode,
@@ -361,6 +359,12 @@ def verify_submission_result(
         raise ValueError(
             f"No subnet plugin is registered for evaluator '{evaluator_entry.evaluator_id}'."
         )
+    # Hash the candidate bundle -- and the current king below -- with the LANE's
+    # hasher (the same one the king was published with), never the generic core
+    # hasher. A subnet may override hash_bundle (SN60 does), and comparing hashes
+    # produced by two different hashers would silently break submission_matches and
+    # king-currency for every legitimate submission.
+    candidate_hash = plugin.hash_bundle(Path(validation.submission_path))
     summary = plugin.load_challenge_summary(challenge_summary_path)
     validator_identity = (
         plugin.validator_identity if plugin is not None else ""
@@ -371,6 +375,7 @@ def verify_submission_result(
             repo_pack=validation.metadata.repo_pack,
             mode=validation.metadata.mode,
             public_root=public_root,
+            artifact_hasher=plugin.hash_bundle,
         )
         or ""
     )
@@ -390,7 +395,18 @@ def verify_submission_result(
     # benchmark-currency staleness guards do not apply -- the top candidate is
     # promoted to king. The plugin's extra_verification_reasons still enforces its
     # own floor (SN60: at least one true-positive vulnerability).
-    candidate_only = bool(getattr(summary, "is_candidate_only", False))
+    #
+    # But only honor that bypass when the candidate-only result is NOT STALE: either
+    # the lane has no reigning king yet (a legitimate bootstrap), or the king the
+    # round ran against is still the current king (a deliberate force-replace). A held
+    # candidate-only result whose king has since changed falls back to the normal
+    # staleness guards -- otherwise it could be promoted over a king it never actually
+    # evaluated against. This comparison is only trustworthy because the recorded and
+    # current king hashes now use the same lane hasher (see above).
+    declared_candidate_only = bool(getattr(summary, "is_candidate_only", False))
+    candidate_only = declared_candidate_only and (
+        current_king_hash == "" or summary.king_artifact_hash == current_king_hash
+    )
     king_is_current = candidate_only or summary.king_artifact_hash == current_king_hash
     benchmark_is_current = candidate_only or (
         summary.validator_model == validator_identity and lane_benchmark_is_current
