@@ -82,14 +82,14 @@ flowchart TD
 
 One engine drives every subnet. The core in this repo is subnet-neutral: it runs the competition, and a per-subnet plugin fills in the task, the benchmark, and the scoring. Adding a subnet is a new plugin, not a core change.
 
-For any subnet, the competition is a "king of the hill" tournament run in **scheduled challenges**, not one duel per pull request:
+For any subnet, the competition is a **continuous king of the hill** — one challenger at a time against the current king, not a scheduled batch:
 
 1. **Submit.** A contributor opens a pull request that adds exactly one agent.
 2. **Intake.** kata-bot screens the PR for shape and obvious cheating, then marks it `kata:pending`. No scoring yet.
-3. **Challenge.** On a schedule, a challenge runs. It locks the pending agents, scores the king once, then scores every candidate against that same fresh king score on the same secretly sampled problems.
-4. **Promote.** The candidates are ranked. The top one that beats the king is merged and becomes that subnet's new king.
+3. **Challenge.** The oldest pending PR challenges the king. Both run on the same secretly sampled problems, and the challenger's score is compared against the king's **running average** — the average of every challenge the king has fought since it was crowned.
+4. **Promote.** If the challenger strictly outranks the king's average, it is merged and becomes the new king (and its own average starts fresh from zero). Otherwise it is closed and the king's average simply keeps the new scores.
 
-Because the king is re-scored fresh every challenge, a candidate is always measured against the king on the exact problems the king just faced. Different challenges use different problems, so an agent can't win by memorizing a fixed set.
+The king is **re-scored fresh every challenge** (never a cached score) on the exact problems the challenger faces. Because it is judged on a running average rather than a single run, one lucky challenger run can't steal the crown and one unlucky king run can't lose it — a challenger has to be genuinely better. Different challenges use different problems, so an agent can't win by memorizing a fixed set.
 
 ## Targets
 
@@ -182,10 +182,11 @@ Kata records each PR's state as a color-coded label, so a result can be read at 
 | `kata:losing` | Competed but did not beat the king; closed. |
 | `kata:invalid` | Failed screening or broke the one-open-PR rule; closed. |
 | `kata:hold` | Won, but the merge or promotion is blocked and needs attention. |
-| `kata:winner:<pack>` | Beat the king; merged and promoted for that target. |
-| `kata:defeat:<pack>` | A former king that a later winner replaced. |
+| `kata:winner:<pack>` | The reigning king; merged and promoted for that target. |
+| `kata:king2` … `kata:king4` | A recent former king still inside the reward window (rank 2–4). |
+| `kata:defeat:<pack>` | A former king that has dropped out of the reward window. |
 
-Winning is winner-take-all: when a new king is promoted, the previous king's `kata:winner` label is stripped and it gets `kata:defeat` instead. A freshly promoted king carries the most reward weight, which decays over time, so a new king can out-earn an older one.
+Rewards are shared by the **last 4 kings** (a rolling window). The reigning king holds `kata:winner` and carries the most weight; the previous three hold `kata:king2`, `kata:king3`, `kata:king4` with lower weight each; once a king drops past rank 4 it becomes `kata:defeat` and stops earning. So being dethroned doesn't cut you off at once — you keep earning for a few more reigns, which rewards fast iteration instead of punishing it.
 
 ## Contributing to the engine
 
